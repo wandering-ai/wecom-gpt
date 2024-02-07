@@ -1,5 +1,6 @@
 use sha1::{Digest, Sha1};
 
+/// 校验微信服务器的请求是否合规
 pub fn check_signature(
     signature: &str,
     timestamp: &str,
