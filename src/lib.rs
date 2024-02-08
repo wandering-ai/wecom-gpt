@@ -6,6 +6,9 @@ use axum::Router;
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
+// 企业微信加解密模块
+mod crypto;
+
 pub fn app() -> Router {
     Router::new()
         .route("/", get(server_verification_handler).post(user_msg_handler))
@@ -16,21 +19,16 @@ pub fn app() -> Router {
 #[derive(Deserialize)]
 struct Params {
     msg_signature: String,
-    timestamp: u64,
+    timestamp: String,
     nonce: String,
     echostr: String,
 }
 
 /// 响应腾讯服务器的可用性验证请求。
 async fn server_verification_handler(params: Query<Params>) -> Result<String, StatusCode> {
-    if params.timestamp > 0 {
-        tracing::info!(
-            "signature: {}, timestamp: {}, nonce: {}, echostr: {}",
-            params.msg_signature,
-            params.timestamp,
-            params.nonce,
-            params.echostr
-        );
+    if crypto::generate_signature(vec![&params.timestamp, &params.nonce, "c", &params.echostr])
+        == params.msg_signature
+    {
         Ok(format!("Message: {}", params.echostr))
     } else {
         tracing::error!("Error! Code: {}", StatusCode::BAD_REQUEST);
@@ -58,7 +56,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("GET")
-                    .uri("/?msg_signature=abc&timestamp=1986&nonce=xyz&echostr=hello")
+                    .uri("/?msg_signature=a8addbc99f8b3f51d2adbceb605d650b9a8940e2&timestamp=0&nonce=a&echostr=b")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -69,6 +67,6 @@ mod tests {
 
         let body = response.into_body();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
-        assert_eq!(&bytes[..], b"Message: hello");
+        assert_eq!(&bytes[..], b"Message: b");
     }
 }
