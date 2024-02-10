@@ -1,4 +1,4 @@
-use wechat_gpt::app;
+use wecom_gpt::app;
 
 #[tokio::main]
 async fn main() {
