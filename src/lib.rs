@@ -7,18 +7,18 @@ use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
 // 企业微信加解密模块
-mod crypto;
+use wecom_crypto::{CryptoAgent, generate_signature};
 
 #[derive(Clone)]
 struct AppState {
     app_token: String,
-    agent: crypto::CryptoAgent,
+    agent: CryptoAgent,
 }
 
 pub fn app(app_token: &str, encoding_aes_key: &str) -> Router {
     let state = AppState {
         app_token: String::from(app_token),
-        agent: crypto::CryptoAgent::new(encoding_aes_key),
+        agent: CryptoAgent::new(encoding_aes_key),
     };
     Router::new()
         .route("/", get(server_verification_handler).post(user_msg_handler))
@@ -41,7 +41,7 @@ async fn server_verification_handler(
     params: Query<Params>,
 ) -> Result<String, StatusCode> {
     // Is this request safe?
-    if crypto::generate_signature(vec![
+    if generate_signature(vec![
         &params.timestamp,
         &params.nonce,
         &state.app_token,
