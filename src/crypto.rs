@@ -1,9 +1,14 @@
-use aes_gcm::{
+use aes::{
     self,
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Key, Nonce,
+    cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit},
+    Aes256,
 };
-use base64::prelude::*;
+use base64::{
+    alphabet,
+    engine::{self, general_purpose::STANDARD},
+    Engine as _,
+};
+use cbc::{Decryptor, Encryptor};
 use rand;
 use sha1::{Digest, Sha1};
 use std::error::Error;
@@ -17,23 +22,34 @@ pub fn generate_signature(mut inputs: Vec<&str>) -> String {
 
 #[derive(PartialEq, Debug)]
 pub struct CryptoSource {
-    text: String,
-    receive_id: String,
+    pub text: String,
+    pub receive_id: String,
 }
 
+#[derive(Clone)]
 pub struct CryptoAgent {
-    cipher: Aes256Gcm,
+    key: [u8; 32],
+    nonce: [u8; 16],
 }
 
 impl CryptoAgent {
+    /// Init a CryptoAgent with provided encoding AES key.
     pub fn new(key: &str) -> Self {
-        let aes_key = Key::<Aes256Gcm>::from_slice(key.as_bytes());
-        let cipher = Aes256Gcm::new(&aes_key);
-        Self { cipher }
+        // The AES key is BASE64 encoded. Be careful this encoding key generated
+        // by Tencent is buggy.
+        let config = engine::GeneralPurposeConfig::new()
+            .with_decode_allow_trailing_bits(true)
+            .with_decode_padding_mode(engine::DecodePaddingMode::RequireNone);
+        let key_as_vec = engine::GeneralPurpose::new(&alphabet::STANDARD, config)
+            .decode(key)
+            .unwrap();
+        let key = <[u8; 32]>::try_from(key_as_vec).unwrap();
+        let nonce = <[u8; 16]>::try_from(&key[..16]).unwrap();
+        Self { key, nonce }
     }
 
     /// 加密
-    pub fn encrypt(&self, input: &CryptoSource) -> (String, String) {
+    pub fn encrypt(&self, input: &CryptoSource) -> String {
         // 待加密数据
         let mut block: Vec<u8> = Vec::new();
 
@@ -50,20 +66,17 @@ impl CryptoAgent {
         block.extend(input.receive_id.as_bytes());
 
         // 加密
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-        let cipher_bytes = self.cipher.encrypt(&nonce, block.as_ref()).unwrap();
-        (
-            BASE64_STANDARD.encode(cipher_bytes),
-            BASE64_STANDARD.encode(nonce),
-        )
+        let cipher_bytes = Encryptor::<Aes256>::new(&self.key.into(), &self.nonce.into())
+            .encrypt_padded_vec_mut::<Pkcs7>(&block);
+        STANDARD.encode(&cipher_bytes)
     }
 
     /// 解密
-    pub fn decrypt(&self, encoded: &str, nonce: &str) -> Result<CryptoSource, Box<dyn Error>> {
-        let cipher_bytes = BASE64_STANDARD.decode(encoded)?;
-        let nonce_bytes = BASE64_STANDARD.decode(nonce)?;
-        let nonce = Nonce::from_slice(&nonce_bytes);
-        let block = self.cipher.decrypt(nonce, &cipher_bytes[..]).unwrap();
+    pub fn decrypt(&self, encoded: &str) -> Result<CryptoSource, Box<dyn Error>> {
+        let cipher_bytes = STANDARD.decode(encoded).unwrap();
+        let block = Decryptor::<Aes256>::new(&self.key.into(), &self.nonce.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(&cipher_bytes)
+            .unwrap();
         let buf = block.as_slice();
         let msg_len: usize = u32::from_be_bytes(buf[16..20].try_into().unwrap()) as usize;
         let text = String::from_utf8(buf[20..20 + msg_len].to_vec())?;
@@ -85,14 +98,14 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt() {
-        let key: String = String::from_utf8(Vec::from([42; 32])).unwrap();
-        let agent = CryptoAgent::new(key.as_ref());
+        let key = "cGCVnNJRgRu6wDgo7gxG2diBovGnRQq1Tqy4Rm4V4qF";
+        let agent = CryptoAgent::new(key);
         let source = CryptoSource {
             text: "abcd".to_string(),
             receive_id: "xyz".to_string(),
         };
-        let (enc, nonce) = agent.encrypt(&source);
-        let dec = agent.decrypt(enc.as_str(), nonce.as_str()).unwrap();
+        let enc = agent.encrypt(&source);
+        let dec = agent.decrypt(enc.as_str()).unwrap();
         assert_eq!(source, dec);
     }
 }
