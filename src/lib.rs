@@ -3,11 +3,12 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Router;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_xml_rs::from_str;
 use tower_http::trace::TraceLayer;
 
 // 企业微信加解密模块
-use wecom_crypto::{CryptoAgent, generate_signature};
+use wecom_crypto::{generate_signature, CryptoAgent};
 
 #[derive(Clone)]
 struct AppState {
@@ -26,9 +27,9 @@ pub fn app(app_token: &str, encoding_aes_key: &str) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-/// 请求涉及到的公共参数
+/// 服务器的可用性验证请求涉及到的参数
 #[derive(Deserialize)]
-struct Params {
+struct UrlVerifyParams {
     msg_signature: String,
     timestamp: String,
     nonce: String,
@@ -38,7 +39,7 @@ struct Params {
 /// 响应腾讯服务器的可用性验证请求。
 async fn server_verification_handler(
     State(state): State<AppState>,
-    params: Query<Params>,
+    params: Query<UrlVerifyParams>,
 ) -> Result<String, StatusCode> {
     // Is this request safe?
     if generate_signature(vec![
@@ -62,8 +63,50 @@ async fn server_verification_handler(
     }
 }
 
+/// 用户主动发送来的消息涉及到的参数
+#[derive(Deserialize)]
+struct UserMsgParams {
+    msg_signature: String,
+    nonce: String,
+    timestamp: String,
+}
+
+// 请求Body结构体
+// <xml>
+//   <ToUserName><![CDATA[toUser]]></ToUserName>
+//   <AgentID><![CDATA[toAgentID]]></AgentID>
+//   <Encrypt><![CDATA[msg_encrypt]]></Encrypt>
+// </xml>
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct RequestBody {
+    #[serde(rename = "ToUserName")]
+    to_user_name: String,
+    #[serde(rename = "AgentID")]
+    agent_id: String,
+    #[serde(rename = "Encrypt")]
+    encrypted_str: String,
+}
+
 /// 处理用户发来的消息。
-async fn user_msg_handler() {}
+async fn user_msg_handler(
+    State(state): State<AppState>,
+    params: Query<UserMsgParams>,
+    body: String,
+) -> Result<String, StatusCode> {
+    // Is this request safe?
+    if generate_signature(vec![&params.timestamp, &params.nonce, &state.app_token])
+        != params.msg_signature
+    {
+        tracing::error!("Error! Code: {}", StatusCode::BAD_REQUEST);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Handle the request.
+    let body: RequestBody = from_str(&body).unwrap();
+    let msg = state.agent.decrypt(&body.encrypted_str).unwrap();
+    tracing::info!(msg.text);
+    Ok(msg.text)
+}
 
 // 单元测试
 #[cfg(test)]
