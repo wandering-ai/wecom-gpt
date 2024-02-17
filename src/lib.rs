@@ -57,7 +57,7 @@ async fn server_verification_handler(
     match state.agent.decrypt(&params.echostr) {
         Ok(s) => Ok(s.text),
         Err(e) => {
-            tracing::error!("Error!: {}", e);
+            tracing::error!("Error in decrypting: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -97,7 +97,7 @@ async fn user_msg_handler(
     if generate_signature(vec![&params.timestamp, &params.nonce, &state.app_token])
         != params.msg_signature
     {
-        tracing::error!("Error! Code: {}", StatusCode::BAD_REQUEST);
+        tracing::error!("Error checking signature. The request is unsafe.");
         return Err(StatusCode::BAD_REQUEST);
     }
 
