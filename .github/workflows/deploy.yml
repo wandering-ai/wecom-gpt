@@ -21,6 +21,18 @@ jobs:
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
+      - name: Cache crates
+        id: cache-crates
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-crates
+        with:
+          path: ~/.cargo
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
       - run: |
           echo "Hello, world."
           cargo build
