@@ -36,3 +36,4 @@ jobs:
       - run: |
           echo "Hello, world."
           cargo build
+          cp target/debug/wecom-gpt /home/robin/wecom-gpt/wecom-gpt
