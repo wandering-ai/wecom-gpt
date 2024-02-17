@@ -109,6 +109,7 @@ async fn user_msg_handler(
     }
 
     // Decrypt the message
+    dbg!(body);
     let msg = state.agent.decrypt(&body.encrypted_str).unwrap();
     tracing::info!(msg.text);
     Ok(msg.text)
