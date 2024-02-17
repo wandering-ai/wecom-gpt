@@ -16,10 +16,10 @@ struct AppState {
     agent: CryptoAgent,
 }
 
-pub fn app(app_token: &str, encoding_aes_key: &str) -> Router {
+pub fn app(app_token: &str, b64encoded_aes_key: &str) -> Router {
     let state = AppState {
         app_token: String::from(app_token),
-        agent: CryptoAgent::new(encoding_aes_key),
+        agent: CryptoAgent::new(b64encoded_aes_key),
     };
     Router::new()
         .route("/", get(server_verification_handler).post(user_msg_handler))
