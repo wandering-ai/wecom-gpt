@@ -93,16 +93,22 @@ async fn user_msg_handler(
     params: Query<UserMsgParams>,
     body: String,
 ) -> Result<String, StatusCode> {
+    // Handle the request.
+    let body: RequestBody = from_str(&body).unwrap();
+
     // Is this request safe?
-    if generate_signature(vec![&params.timestamp, &params.nonce, &state.app_token])
-        != params.msg_signature
+    if generate_signature(vec![
+        &params.timestamp,
+        &params.nonce,
+        &state.app_token,
+        &body.encrypted_str,
+    ]) != params.msg_signature
     {
         tracing::error!("Error checking signature. The request is unsafe.");
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Handle the request.
-    let body: RequestBody = from_str(&body).unwrap();
+    // Decrypt the message
     let msg = state.agent.decrypt(&body.encrypted_str).unwrap();
     tracing::info!(msg.text);
     Ok(msg.text)
