@@ -14,7 +14,7 @@ use tower_http::trace::TraceLayer;
 use wecom_crypto::{generate_signature, CryptoAgent};
 
 // 企业微信API模块
-use wecom_agent::WecomAgent;
+use wecom_agent::{TextMsg, TextMsgContent, WecomAgent};
 
 #[derive(Clone)]
 struct AppState {
@@ -37,7 +37,6 @@ pub async fn app(app_token: &str, b64encoded_aes_key: &str, corp_id: &str, secre
     if !wecom_agent.token_is_some() {
         panic!("Failed to fetch access token. Are the corpid and secret valid?");
     }
-    dbg!(&wecom_agent);
 
     // Init a router with this state.
     let state = AppState {
@@ -177,8 +176,24 @@ async fn user_msg_handler(
     // Respond
     let received = received.unwrap();
     tokio::spawn(async move {
-        sleep(time::Duration::from_secs(3));
-        dbg!(received);
+        let msg = TextMsg {
+            touser: received.from_user_name,
+            toparty: "".to_string(),
+            totag: "".to_string(),
+            msgtype: "text".to_string(),
+            agentid: received.agent_id.parse::<usize>().unwrap(),
+            safe: 0,
+            enable_id_trans: 0,
+            enable_duplicate_check: 0,
+            duplicate_check_interval: 1800,
+            text: TextMsgContent {
+                content: received.content,
+            },
+        };
+        match state.wecom_agent.send_text(&msg).await {
+            Ok(_) => (),
+            Err(e) => tracing::error!("Error sending msg: {}", e),
+        }
     });
     dbg!("Background task running.");
     StatusCode::OK
