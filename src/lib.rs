@@ -13,16 +13,37 @@ use tower_http::trace::TraceLayer;
 // 企业微信加解密模块
 use wecom_crypto::{generate_signature, CryptoAgent};
 
+// 企业微信API模块
+use wecom_agent::WecomAgent;
+
 #[derive(Clone)]
 struct AppState {
     app_token: String,
-    agent: CryptoAgent,
+    crypto_agent: CryptoAgent,
+    wecom_agent: WecomAgent,
 }
 
-pub fn app(app_token: &str, b64encoded_aes_key: &str) -> Router {
+pub async fn app(app_token: &str, b64encoded_aes_key: &str, corp_id: &str, secret: &str) -> Router {
+    // Try init the wecom agent. Internet connection is required for fetching
+    // access token from WeCom server, meaning this may fail.
+    let mut wecom_agent = WecomAgent::new(corp_id, secret);
+    for count in [1, 2, 3] {
+        match wecom_agent.update_token().await {
+            Ok(_) => break,
+            Err(e) => tracing::error!("Token update error in try {}: {}", count, e),
+        }
+        sleep(time::Duration::from_secs(1));
+    }
+    if !wecom_agent.token_is_some() {
+        panic!("Failed to fetch access token. Are the corpid and secret valid?");
+    }
+    dbg!(&wecom_agent);
+
+    // Init a router with this state.
     let state = AppState {
         app_token: String::from(app_token),
-        agent: CryptoAgent::new(b64encoded_aes_key),
+        crypto_agent: CryptoAgent::new(b64encoded_aes_key),
+        wecom_agent,
     };
     Router::new()
         .route("/", get(server_verification_handler).post(user_msg_handler))
@@ -57,7 +78,7 @@ async fn server_verification_handler(
     }
 
     // Give the server what it expects.
-    match state.agent.decrypt(&params.echostr) {
+    match state.crypto_agent.decrypt(&params.echostr) {
         Ok(s) => Ok(s.text),
         Err(e) => {
             tracing::error!("Error in decrypting: {}", e);
@@ -140,7 +161,7 @@ async fn user_msg_handler(
     }
 
     // Decrypt the message
-    let decrypt_result = state.agent.decrypt(&body.encrypted_str);
+    let decrypt_result = state.crypto_agent.decrypt(&body.encrypted_str);
     if let Err(e) = &decrypt_result {
         tracing::error!("Error in decrypting: {}", e);
         return StatusCode::INTERNAL_SERVER_ERROR;
@@ -161,38 +182,4 @@ async fn user_msg_handler(
     });
     dbg!("Background task running.");
     StatusCode::OK
-}
-
-// 单元测试
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
-    };
-    use tower::ServiceExt;
-
-    #[tokio::test]
-    async fn server_verification() {
-        let app_token = "HWmSYaJCKJFVn9YvbdVEmiYl";
-        let encoding_aes_key = "cGCVnNJRgRu6wDgo7gxG2diBovGnRQq1Tqy4Rm4V4qF";
-        let app = app(app_token, encoding_aes_key);
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/?msg_signature=5666e50620f9616a29c109400608107cf22f440c&timestamp=1707492633&nonce=1cb5ep5w0z5&echostr=yIPnqi0lsdTE1XZUNQR5EtlSSzrdTqC2WjN1IgKaBBIrofmwjciHCqTn6grIcaLw2%2FMDGi7DsGHp%2FibRx0n8Fg%3D%3D")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = response.into_body();
-        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
-        assert_eq!(&bytes[..], b"01234567890109876543210");
-    }
 }

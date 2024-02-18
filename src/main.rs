@@ -5,6 +5,8 @@ use wecom_gpt::app;
 struct Configuration {
     app_token: String,
     b64_encoded_aes_key: String,
+    corp_id: String,
+    corp_secret: String,
 }
 
 #[tokio::main]
@@ -13,11 +15,17 @@ async fn main() {
     tracing_subscriber::fmt().compact().init();
 
     // Read in configuration from OS env.
-    let c: Configuration = envy::from_env::<Configuration>()
-        .expect("Please provide APP_TOKEN and B64_ENCODED_AES_KEY env vars");
+    let c: Configuration =
+        envy::from_env::<Configuration>().expect("Please provide all required env vars");
 
     // Init the service
-    let service = app(&c.app_token, &c.b64_encoded_aes_key);
+    let service = app(
+        &c.app_token,
+        &c.b64_encoded_aes_key,
+        &c.corp_id,
+        &c.corp_secret,
+    )
+    .await;
 
     tracing::info!("Listening on port 8088..");
 
