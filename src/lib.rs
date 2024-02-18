@@ -87,12 +87,40 @@ struct RequestBody {
     encrypted_str: String,
 }
 
+// 存储用户所发送消息的结构体
+// <xml>
+//   <ToUserName><![CDATA[ww637951f75e40d82b]]></ToUserName>
+//   <FromUserName><![CDATA[YinGuoBing]]></FromUserName>
+//   <CreateTime>1708218294</CreateTime>
+//   <MsgType><![CDATA[text]]></MsgType>
+//   <Content><![CDATA[[呲牙]]]></Content>
+//   <MsgId>7336741709953816625</MsgId>
+//   <AgentID>1000002</AgentID>
+// </xml>
+#[derive(Debug, Deserialize, PartialEq)]
+struct ReceivedMsg {
+    #[serde(rename = "ToUserName")]
+    to_user_name: String,
+    #[serde(rename = "FromUserName")]
+    from_user_name: String,
+    #[serde(rename = "CreateTime")]
+    create_time: usize,
+    #[serde(rename = "MsgType")]
+    msg_type: String,
+    #[serde(rename = "Content")]
+    content: String,
+    #[serde(rename = "MsgId")]
+    msg_id: String,
+    #[serde(rename = "AgentID")]
+    agent_id: String,
+}
+
 /// 处理用户发来的消息。
 async fn user_msg_handler(
     State(state): State<AppState>,
     params: Query<UserMsgParams>,
     body: String,
-) -> Result<String, StatusCode> {
+) -> StatusCode {
     // Handle the request.
     let body: RequestBody = from_str(&body).unwrap();
 
@@ -105,14 +133,27 @@ async fn user_msg_handler(
     ]) != params.msg_signature
     {
         tracing::error!("Error checking signature. The request is unsafe.");
-        return Err(StatusCode::BAD_REQUEST);
+        return StatusCode::BAD_REQUEST;
     }
 
     // Decrypt the message
-    dbg!(&body);
-    let msg = state.agent.decrypt(&body.encrypted_str).unwrap();
-    tracing::info!(msg.text);
-    Ok(msg.text)
+    let decrypt_result = state.agent.decrypt(&body.encrypted_str);
+    if let Err(e) = &decrypt_result {
+        tracing::error!("Error in decrypting: {}", e);
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    // Parse the xml document
+    let received = from_str::<ReceivedMsg>(&decrypt_result.unwrap().text);
+    if let Err(e) = &received {
+        tracing::error!("Error in xml parsing: {}", e);
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    // Respond
+    let received = received.unwrap();
+    dbg!(received);
+    StatusCode::OK
 }
 
 // 单元测试
