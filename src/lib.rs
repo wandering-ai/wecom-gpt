@@ -156,8 +156,8 @@ async fn user_msg_handler(
     // Respond
     let received = received.unwrap();
     tokio::spawn(async move {
+        sleep(time::Duration::from_secs(3));
         dbg!(received);
-        sleep(time::Duration::from_secs(3))
     });
     dbg!("Background task running.");
     StatusCode::OK
