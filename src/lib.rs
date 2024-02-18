@@ -195,6 +195,5 @@ async fn user_msg_handler(
             Err(e) => tracing::error!("Error sending msg: {}", e),
         }
     });
-    dbg!("Background task running.");
     StatusCode::OK
 }
