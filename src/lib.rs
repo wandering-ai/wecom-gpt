@@ -1,3 +1,6 @@
+use core::time;
+use std::thread::sleep;
+
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -152,7 +155,11 @@ async fn user_msg_handler(
 
     // Respond
     let received = received.unwrap();
-    dbg!(received);
+    tokio::spawn(async move {
+        dbg!(received);
+        sleep(time::Duration::from_secs(3))
+    });
+    dbg!("Background task running.");
     StatusCode::OK
 }
 
