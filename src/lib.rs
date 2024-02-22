@@ -1,7 +1,3 @@
-use std::sync::{Arc, RwLock};
-use std::thread::sleep;
-use std::time::Duration;
-
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -9,15 +5,17 @@ use axum::Router;
 
 use serde::{Deserialize, Serialize};
 use serde_xml_rs::from_str;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
 // 企业微信加解密模块
 use wecom_crypto::{generate_signature, CryptoAgent};
 
 // 企业微信API模块
-use wecom_agent::{TextMsg, TextMsgContent, WecomAgent};
+use wecom_agent::{MsgSendResponse, TextMsg, TextMsgContent, WecomAgent};
 
-// WecomAgent为共享对象。当access_token更新时，需要避免数据冲突。
+// Shared state used in all routers
 type SharedState = Arc<RwLock<AppState>>;
 
 #[derive(Clone)]
@@ -30,27 +28,18 @@ struct AppState {
 pub async fn app(app_token: &str, b64encoded_aes_key: &str, corp_id: &str, secret: &str) -> Router {
     // Try init the wecom agent. Internet connection is required for fetching
     // access token from WeCom server, meaning this may fail.
-    let mut wecom_agent = WecomAgent::new(corp_id, secret);
-    for count in [1, 2, 3] {
-        match wecom_agent.update_token().await {
-            Ok(_) => break,
-            Err(e) => tracing::error!("Token update error in try {}: {}", count, e),
-        }
-        sleep(Duration::from_secs(1));
+    let wecom_agent = WecomAgent::new(corp_id, secret).await;
+    if let Err(e) = wecom_agent {
+        panic!("Initialization failed. {}", e);
     }
-    if !wecom_agent.token_is_some() {
-        panic!("Failed to fetch access token. Are the corpid and secret valid?");
-    }
+    let wecom_agent = wecom_agent.expect("wecom agent should be initialized.");
 
     // Init a router with this shared state.
-    let state = SharedState::new(
-        AppState {
-            app_token: String::from(app_token),
-            crypto_agent: CryptoAgent::new(b64encoded_aes_key),
-            wecom_agent,
-        }
-        .into(),
-    );
+    let state = Arc::new(RwLock::new(AppState {
+        app_token: String::from(app_token),
+        crypto_agent: CryptoAgent::new(b64encoded_aes_key),
+        wecom_agent,
+    }));
     Router::new()
         .route("/", get(server_verification_handler).post(user_msg_handler))
         .with_state(state)
@@ -71,13 +60,8 @@ async fn server_verification_handler(
     State(state): State<SharedState>,
     params: Query<UrlVerifyParams>,
 ) -> Result<String, StatusCode> {
-    // Lock the state
-    let state = state.read();
-    if state.is_err() {
-        tracing::error!("Can not lock the app state.");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-    let state = state.unwrap();
+    // Acquire the lock
+    let state = state.read().await;
 
     // Is this request safe?
     if generate_signature(vec![
@@ -96,7 +80,7 @@ async fn server_verification_handler(
         Ok(t) => Ok(t.text),
         Err(e) => {
             tracing::error!("Error in decrypting: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
@@ -162,17 +146,9 @@ async fn user_msg_handler(
     // Handle the request.
     let body: RequestBody = from_str(&body).unwrap();
 
-    let mut received_msg: ReceivedMsg;
+    // Is this request safe?
     {
-        // Acquire the lock
-        let state = state.read();
-        if state.is_err() {
-            tracing::error!("Can not lock the app state.");
-            return StatusCode::INTERNAL_SERVER_ERROR;
-        }
-        let state = state.unwrap();
-
-        // Is this request safe?
+        let state = state.read().await;
         if generate_signature(vec![
             &params.timestamp,
             &params.nonce,
@@ -183,25 +159,41 @@ async fn user_msg_handler(
             tracing::error!("Error checking signature. The request is unsafe.");
             return StatusCode::BAD_REQUEST;
         }
+    }
 
-        // Decrypt the message
+    // Respond
+    tokio::spawn(async move {
+        process_user_msg(state, body).await;
+    });
+
+    StatusCode::OK
+}
+
+async fn process_user_msg(state: Arc<RwLock<AppState>>, body: RequestBody) {
+    let response: Result<MsgSendResponse, Box<dyn std::error::Error + Send + Sync>>;
+
+    {
+        // Acquire a read lock
+        let state = state.read().await;
+
+        // Decrypt the user message
         let decrypt_result = state.crypto_agent.decrypt(&body.encrypted_str);
         if let Err(e) = &decrypt_result {
             tracing::error!("Error in decrypting: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return;
         }
 
         // Parse the xml document
         let xml_doc = from_str::<ReceivedMsg>(&decrypt_result.unwrap().text);
         if let Err(e) = &xml_doc {
             tracing::error!("Error in xml parsing: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR;
+            return;
         }
-        received_msg = xml_doc.unwrap();
-    }
+        let received_msg = xml_doc.expect("XML document should be valid.");
 
-    // Respond
-    tokio::spawn(async move {
+        // 回复给用户的消息
+        let response_msg = received_msg.content;
+
         let msg = TextMsg {
             touser: received_msg.from_user_name,
             toparty: "".to_string(),
@@ -213,32 +205,30 @@ async fn user_msg_handler(
             enable_duplicate_check: 0,
             duplicate_check_interval: 1800,
             text: TextMsgContent {
-                content: received_msg.content,
+                content: response_msg,
             },
         };
 
-        // Send the msg
-        let state_ro = state.read().unwrap();
-        let response = state_ro.wecom_agent.send_text(&msg).await;
-        drop(state_ro);
-        if let Err(e) = &response {
-            tracing::error!("Error sending msg: {}", e);
-        }
-        let response = response.unwrap();
+        response = state.wecom_agent.send_text(&msg).await;
+    }
+    if let Err(e) = &response {
+        tracing::error!("Error sending msg: {}", e);
+        return;
+    }
+    let response = response.unwrap();
 
-        // Token out of date?
-        if response.error_code() == 40014 {
-            tracing::error!("Access token error: {}", response.error_msg());
-            // update token
-            let mut state_w = state.write().unwrap();
-            match state_w.wecom_agent.update_token().await {
-                Ok(_) => (),
-                Err(e) => {
-                    tracing::error!("Update token error: {}", e);
-                }
+    // Token out of date?
+    if response.error_code() == 40014 {
+        tracing::error!("Access token error: {}", response.error_msg());
+        let mut state = state.write().await;
+        // update token
+        match state.wecom_agent.update_token().await {
+            Ok(_) => {
+                tracing::info!("Access token error: {}", response.error_msg());
             }
-        };
-    });
-
-    StatusCode::OK
+            Err(e) => {
+                tracing::error!("Update token error: {}", e);
+            }
+        }
+    };
 }
