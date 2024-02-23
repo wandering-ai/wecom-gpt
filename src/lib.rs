@@ -13,7 +13,10 @@ use tower_http::trace::TraceLayer;
 use wecom_crypto::{generate_signature, CryptoAgent};
 
 // 企业微信API模块
-use wecom_agent::{MsgSendResponse, TextMsg, TextMsgContent, WecomAgent};
+use wecom_agent::{
+    message::{MessageBuilder, Text},
+    MsgSendResponse, WecomAgent,
+};
 
 // Shared state used in all routers
 type SharedState = Arc<RwLock<AppState>>;
@@ -192,24 +195,13 @@ async fn process_user_msg(state: Arc<RwLock<AppState>>, body: RequestBody) {
         let received_msg = xml_doc.expect("XML document should be valid.");
 
         // 回复给用户的消息
-        let response_msg = received_msg.content;
-
-        let msg = TextMsg {
-            touser: received_msg.from_user_name,
-            toparty: "".to_string(),
-            totag: "".to_string(),
-            msgtype: "text".to_string(),
-            agentid: received_msg.agent_id.parse::<usize>().unwrap(),
-            safe: 0,
-            enable_id_trans: 0,
-            enable_duplicate_check: 0,
-            duplicate_check_interval: 1800,
-            text: TextMsgContent {
-                content: response_msg,
-            },
-        };
-
-        response = state.wecom_agent.send_text(&msg).await;
+        let content = Text::new(received_msg.content);
+        let msg = MessageBuilder::default()
+            .to_users(vec![&received_msg.from_user_name])
+            .from_agent(received_msg.agent_id.parse::<usize>().unwrap())
+            .build(content)
+            .expect("Massage should be built");
+        response = state.wecom_agent.send(msg).await;
     }
     if let Err(e) = &response {
         tracing::error!("Error sending msg: {}", e);
