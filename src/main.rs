@@ -7,6 +7,8 @@ struct Configuration {
     b64_encoded_aes_key: String,
     corp_id: String,
     corp_secret: String,
+    azure_openai_endpoint: String,
+    azure_openai_api_key: String,
 }
 
 #[tokio::main]
@@ -24,6 +26,8 @@ async fn main() {
         &c.b64_encoded_aes_key,
         &c.corp_id,
         &c.corp_secret,
+        &c.azure_openai_endpoint,
+        &c.azure_openai_api_key,
     )
     .await;
 

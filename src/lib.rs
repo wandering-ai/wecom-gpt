@@ -1,3 +1,5 @@
+mod openai;
+
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -8,6 +10,9 @@ use serde_xml_rs::from_str;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
+
+// OpenAI API
+use openai::{Conversation, Message, OpenAiAgent};
 
 // 企业微信加解密模块
 use wecom_crypto::{generate_signature, CryptoAgent};
@@ -26,9 +31,17 @@ struct AppState {
     app_token: String,
     crypto_agent: CryptoAgent,
     wecom_agent: WecomAgent,
+    oai_agent: OpenAiAgent,
 }
 
-pub async fn app(app_token: &str, b64encoded_aes_key: &str, corp_id: &str, secret: &str) -> Router {
+pub async fn app(
+    app_token: &str,
+    b64encoded_aes_key: &str,
+    corp_id: &str,
+    secret: &str,
+    oai_endpoint: &str,
+    oai_key: &str,
+) -> Router {
     // Try init the wecom agent. Internet connection is required for fetching
     // access token from WeCom server, meaning this may fail.
     let wecom_agent = WecomAgent::new(corp_id, secret).await;
@@ -42,6 +55,7 @@ pub async fn app(app_token: &str, b64encoded_aes_key: &str, corp_id: &str, secre
         app_token: String::from(app_token),
         crypto_agent: CryptoAgent::new(b64encoded_aes_key),
         wecom_agent,
+        oai_agent: OpenAiAgent::new(oai_endpoint, oai_key),
     }));
     Router::new()
         .route("/", get(server_verification_handler).post(user_msg_handler))
@@ -194,8 +208,26 @@ async fn process_user_msg(state: Arc<RwLock<AppState>>, body: RequestBody) {
         }
         let received_msg = xml_doc.expect("XML document should be valid.");
 
+        // 使用AI处理用户消息
+        let mut conversation = Conversation::new();
+        conversation.append(&Message {
+            role: "system".to_string(),
+            content: "你是一位热情友善的智能助手，名字叫小白。".to_string(),
+        });
+        conversation.append(&Message {
+            role: "user".to_string(),
+            content: received_msg.content,
+        });
+        let ai_response = state.oai_agent.chat(&conversation).await;
+        if let Err(e) = &ai_response {
+            tracing::error!("Error getting AI msg: {}", e);
+            return;
+        }
+        let ai_response = ai_response.unwrap();
+        let reply = &ai_response.choices[0].message.content;
+
         // 回复给用户的消息
-        let content = Text::new(received_msg.content);
+        let content = Text::new(reply.to_string());
         let msg = MessageBuilder::default()
             .to_users(vec![&received_msg.from_user_name])
             .from_agent(received_msg.agent_id.parse::<usize>().unwrap())
