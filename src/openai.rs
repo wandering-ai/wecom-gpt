@@ -129,7 +129,7 @@ pub struct ChatResponse {
 
 #[derive(Deserialize)]
 struct ApiUsage {
-    prompt_token: usize,
+    prompt_tokens: usize,
     completion_tokens: usize,
     total_tokens: usize,
 }
