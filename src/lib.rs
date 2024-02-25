@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
 // OpenAI API
-use openai::{Conversation, Message, OpenAiAgent};
+use openai::{Conversation, Message, MessageRole, OpenAiAgent};
 
 // 企业微信加解密模块
 use wecom_crypto::{generate_signature, CryptoAgent};
@@ -209,22 +209,15 @@ async fn process_user_msg(state: Arc<RwLock<AppState>>, body: RequestBody) {
         let received_msg = xml_doc.expect("XML document should be valid.");
 
         // 使用AI处理用户消息
-        let mut conversation = Conversation::new();
-        conversation.append(&Message {
-            role: "system".to_string(),
-            content: "你是一位热情友善的智能助手，名字叫小白。".to_string(),
-        });
-        conversation.append(&Message {
-            role: "user".to_string(),
-            content: received_msg.content,
-        });
+        let mut conversation = Conversation::new(Some("你是一位热情友善的智能助手，名字叫小白。"));
+        conversation.append(&Message::new(MessageRole::System, received_msg.content));
         let ai_response = state.oai_agent.chat(&conversation).await;
         if let Err(e) = &ai_response {
             tracing::error!("Error getting AI msg: {}", e);
             return;
         }
         let ai_response = ai_response.unwrap();
-        let reply = &ai_response.choices[0].message.content;
+        let reply = &ai_response.choices[0].message.content();
 
         // 回复给用户的消息
         let content = Text::new(reply.to_string());

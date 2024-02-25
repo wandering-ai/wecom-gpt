@@ -72,16 +72,24 @@ pub struct Conversation {
 }
 
 impl Conversation {
-    pub fn new() -> Self {
-        Self {
-            messages: Vec::<Message>::new(),
-        }
+    // 新建一组会话记录
+    pub fn new(system_msg: Option<&str>) -> Self {
+        let mut messages = Vec::<Message>::new();
+        let sys_msg = match system_msg {
+            Some(msg) => msg,
+            None => "You are a helpful assistant.",
+        };
+        messages.push(Message::new(MessageRole::System, sys_msg.to_owned()));
+        Self { messages }
     }
 
+    // 为当前会话记录追加一条消息
     pub fn append(&mut self, msg: &Message) {
         self.messages.push(msg.clone());
     }
 
+    // 清空当前会话记录
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.messages.clear();
     }
@@ -90,8 +98,33 @@ impl Conversation {
 // 会话记录中的每一条消息
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Message {
-    pub role: String,
-    pub content: String,
+    role: MessageRole,
+    content: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub enum MessageRole {
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    Assistant,
+}
+
+impl Message {
+    pub fn new(role: MessageRole, content: String) -> Self {
+        Self { role, content }
+    }
+
+    #[allow(dead_code)]
+    pub fn role(&self) -> &MessageRole {
+        &self.role
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
 }
 
 // Chat请求返回结果
