@@ -1,4 +1,4 @@
-mod openai;
+mod reception;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -11,8 +11,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
-// OpenAI API
-use openai::{Conversation, Message, MessageRole, OpenAiAgent};
+// 统筹全部逻辑的应用Agent
+use reception::Agent;
 
 // 企业微信加解密模块
 use wecom_crypto::{generate_signature, CryptoAgent};
@@ -31,7 +31,7 @@ struct AppState {
     app_token: String,
     crypto_agent: CryptoAgent,
     wecom_agent: WecomAgent,
-    oai_agent: OpenAiAgent,
+    app_agent: Agent,
 }
 
 pub async fn app(
@@ -55,7 +55,7 @@ pub async fn app(
         app_token: String::from(app_token),
         crypto_agent: CryptoAgent::new(b64encoded_aes_key),
         wecom_agent,
-        oai_agent: OpenAiAgent::new(oai_endpoint, oai_key),
+        app_agent: Agent::new(oai_endpoint, oai_key),
     }));
     Router::new()
         .route("/", get(server_verification_handler).post(user_msg_handler))
@@ -187,8 +187,8 @@ async fn user_msg_handler(
 }
 
 async fn process_user_msg(state: Arc<RwLock<AppState>>, body: RequestBody) {
-    let response: Result<MsgSendResponse, Box<dyn std::error::Error + Send + Sync>>;
-
+    // 获取用户的消息
+    let received_msg: ReceivedMsg;
     {
         // Acquire a read lock
         let state = state.read().await;
@@ -206,26 +206,34 @@ async fn process_user_msg(state: Arc<RwLock<AppState>>, body: RequestBody) {
             tracing::error!("Error in xml parsing: {}", e);
             return;
         }
-        let received_msg = xml_doc.expect("XML document should be valid.");
+        received_msg = xml_doc.expect("XML document should be valid.");
+    }
 
-        // 使用AI处理用户消息
-        let mut conversation = Conversation::new(Some("你是一位热情友善的智能助手，名字叫小白。"));
-        conversation.append(&Message::new(MessageRole::System, received_msg.content));
-        let ai_response = state.oai_agent.chat(&conversation).await;
-        if let Err(e) = &ai_response {
-            tracing::error!("Error getting AI msg: {}", e);
+    // 使用AI处理用户消息
+    let reply: String;
+    {
+        let mut state = state.write().await;
+        let ai_reply = state
+            .app_agent
+            .handle_user_message(&received_msg.from_user_name, &received_msg.content)
+            .await;
+        if let Err(e) = &ai_reply {
+            tracing::error!("Error reply user message: {}", e);
             return;
         }
-        let ai_response = ai_response.unwrap();
-        let reply = &ai_response.choices[0].message.content();
+        reply = ai_reply.expect("User message should be handled");
+    }
 
-        // 回复给用户的消息
-        let content = Text::new(reply.to_string());
-        let msg = MessageBuilder::default()
-            .to_users(vec![&received_msg.from_user_name])
-            .from_agent(received_msg.agent_id.parse::<usize>().unwrap())
-            .build(content)
-            .expect("Massage should be built");
+    // 回复给用户的消息
+    let content = Text::new(reply);
+    let msg = MessageBuilder::default()
+        .to_users(vec![&received_msg.from_user_name])
+        .from_agent(received_msg.agent_id.parse::<usize>().unwrap())
+        .build(content)
+        .expect("Massage should be built");
+    let response: Result<MsgSendResponse, Box<dyn std::error::Error + Send + Sync>>;
+    {
+        let state = state.read().await;
         response = state.wecom_agent.send(msg).await;
     }
     if let Err(e) = &response {

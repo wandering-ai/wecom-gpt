@@ -1,5 +1,7 @@
+use crate::reception::guest::{Conversation as GuestConvs, MessageRole as GuestMsgRole};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
+use std::convert::From;
 use std::error::Error as StdError;
 
 #[derive(Debug, Clone)]
@@ -87,11 +89,31 @@ impl Conversation {
     pub fn append(&mut self, msg: &Message) {
         self.messages.push(msg.clone());
     }
+}
 
-    // 清空当前会话记录
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        self.messages.clear();
+impl From<GuestConvs<'_>> for Conversation {
+    fn from(value: GuestConvs) -> Self {
+        let mut messages = Vec::<Message>::new();
+
+        // 首条消息应当为系统消息
+        let mut msg_iter = value.iter();
+        let sys_msg = match value.len() {
+            n if n > 0 => msg_iter.next().unwrap().content(),
+            _ => "You are a helpful assistant.",
+        };
+        messages.push(Message::new(MessageRole::System, sys_msg.to_owned()));
+
+        // 追加剩余消息
+        while let Some(msg) = msg_iter.next() {
+            let role = match msg.role() {
+                GuestMsgRole::Assistant => MessageRole::Assistant,
+                GuestMsgRole::System => MessageRole::System,
+                GuestMsgRole::User => MessageRole::User,
+            };
+            messages.push(Message::new(role, msg.content().to_owned()))
+        }
+
+        Self { messages }
     }
 }
 
@@ -158,6 +180,13 @@ pub struct ChatResponse {
     model: String,
     usage: ApiUsage,
     pub choices: Vec<ChatResult>,
+}
+
+impl ChatResponse {
+    pub fn charge(&self) -> f64 {
+        (self.usage.prompt_tokens as f64 * 0.06 + self.usage.completion_tokens as f64 * 0.12)
+            / 1000.0
+    }
 }
 
 #[derive(Deserialize)]
