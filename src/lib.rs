@@ -18,7 +18,7 @@ struct AppState {
     app_agent: Agent,
 }
 
-pub async fn app(
+pub fn app(
     app_token: &str,
     b64encoded_aes_key: &str,
     corp_id: &str,
@@ -50,6 +50,8 @@ async fn server_verification_handler(
     State(state): State<SharedState>,
     params: Query<UrlVerifyParams>,
 ) -> Result<String, StatusCode> {
+    tracing::debug!("Got url verification request.");
+
     state.app_agent.verify_url(params)
 }
 
@@ -59,6 +61,8 @@ async fn user_msg_handler(
     params: Query<UserMsgParams>,
     body: String,
 ) -> StatusCode {
+    tracing::debug!("Got user message.");
+
     // 微信服务器要求即时响应，故异步处理这条消息。
     tokio::spawn(async move {
         state.app_agent.handle_user_request(params, body).await;

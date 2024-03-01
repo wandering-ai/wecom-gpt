@@ -108,14 +108,19 @@ impl Agent {
         let received_msg: ReceivedMsg = xml_doc.expect("XML document should be valid.");
 
         // 谁发送的消息？
-        {
+        let user_ready = {
+            let guest_list = self.guest_list.read().await;
+            guest_list.contains_key(&received_msg.from_user_name)
+        };
+        tracing::debug!("User {} ready: {}", received_msg.from_user_name, user_ready);
+        if !user_ready {
             let mut guest_list = self.guest_list.write().await;
-            let _ = guest_list
-                .entry(received_msg.from_user_name.to_owned())
-                .or_insert(
-                    Guest::new(&received_msg.from_user_name, 1.0)
-                        .expect("Create new user should not fail."),
-                );
+            guest_list.insert(
+                received_msg.from_user_name.clone(),
+                Guest::new(&received_msg.from_user_name, 1.0)
+                    .expect("Create new user should not fail."),
+            );
+            tracing::debug!("User {} created", received_msg.from_user_name);
         }
 
         // 发送账户有效？
@@ -154,6 +159,10 @@ impl Agent {
                 Message::new(&received_msg.content, &None, 0.0, MessageRole::User)
                     .expect("Create new message should not fail"),
             );
+            tracing::debug!(
+                "User {} updated with user message",
+                received_msg.from_user_name
+            );
         }
 
         // 获取AI回复
@@ -169,6 +178,7 @@ impl Agent {
 
             // 交由AI处理
             response = self.ai_agent.chat(&conversation.into()).await;
+            tracing::debug!("User {} AI message got", received_msg.from_user_name);
         }
 
         // AI接口成功？
@@ -213,6 +223,7 @@ impl Agent {
                 )
                 .expect("Create new message should not fail"),
             );
+            tracing::debug!("User {} ai message appended", received_msg.from_user_name);
         }
 
         // 回复用户最终结果
@@ -220,6 +231,7 @@ impl Agent {
         if let Err(e) = self.reply(&received_msg, content).await {
             tracing::error!("回复用户消息失败：{e}");
         }
+        tracing::debug!("User {} handled", received_msg.from_user_name);
     }
 
     // 向用户回复一条消息

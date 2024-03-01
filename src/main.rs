@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use tracing_subscriber::EnvFilter;
 use wecom_gpt::app;
 
 #[derive(Deserialize, Debug)]
@@ -14,7 +15,10 @@ struct Configuration {
 #[tokio::main]
 async fn main() {
     // Setup tracing
-    tracing_subscriber::fmt().compact().init();
+    tracing_subscriber::fmt()
+        .compact()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
     // Read in configuration from OS env.
     let c: Configuration =
@@ -28,8 +32,7 @@ async fn main() {
         &c.corp_secret,
         &c.azure_openai_endpoint,
         &c.azure_openai_api_key,
-    )
-    .await;
+    );
 
     tracing::info!("Listening on port 8088..");
 
