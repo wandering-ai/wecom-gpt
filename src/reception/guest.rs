@@ -40,6 +40,7 @@ impl Guest {
         self.active_index = self.history.len();
     }
 
+    /// 添加一条会话消息，同时更新用户账户余额
     pub fn append_message(&mut self, msg: Message) {
         self.history.push(msg.clone());
         self.credit -= msg.cost();
