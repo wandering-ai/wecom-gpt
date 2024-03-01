@@ -223,15 +223,16 @@ impl Agent {
                 )
                 .expect("Create new message should not fail"),
             );
-            tracing::debug!("User {} ai message appended", received_msg.from_user_name);
+            tracing::debug!("User {} AI message appended", received_msg.from_user_name);
         }
 
         // 回复用户最终结果
         let content = Text::new(response.choices[0].message.content().to_owned());
-        if let Err(e) = self.reply(&received_msg, content).await {
-            tracing::error!("回复用户消息失败：{e}");
+        let result = self.reply(&received_msg, content).await;
+        match result {
+            Err(e) => tracing::error!("回复用户消息失败：{e}"),
+            Ok(_) => tracing::debug!("User {} replied", received_msg.from_user_name),
         }
-        tracing::debug!("User {} handled", received_msg.from_user_name);
     }
 
     // 向用户回复一条消息
