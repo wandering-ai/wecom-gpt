@@ -256,10 +256,21 @@ impl Agent {
             .expect("Massage should be built");
 
         // 发送该消息
-        let response = self.wecom_agent.send(msg).await?;
+        tracing::debug!("Sending message to {} ...", received_msg.from_user_name);
+        let response = self.wecom_agent.send(msg).await;
+        if let Err(e) = response {
+            tracing::debug!("Error sending msg: {e}");
+            return Err(Box::new(Error::new(format!("Error sending msg: {e}"))));
+        }
+        let response = response.expect("Response should be valid.");
 
         // 发送成功，但是服务器返回错误。
         if response.is_error() {
+            tracing::debug!(
+                "Wecom API error: {} {}",
+                response.error_code(),
+                response.error_msg()
+            );
             return Err(Box::new(Error::new(format!(
                 "Error sending msg: {}, {}",
                 response.error_code(),
