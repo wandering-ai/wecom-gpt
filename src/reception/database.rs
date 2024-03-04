@@ -1,9 +1,8 @@
 //! DBAgent负责将数据写入与读出数据库
-use duckdb::DuckdbConnectionManager;
+use duckdb::{params, DuckdbConnectionManager};
 use r2d2::Pool;
 
 pub struct DBAgent {
-    path: String,
     connections: Pool<DuckdbConnectionManager>,
 }
 
@@ -12,10 +11,7 @@ impl DBAgent {
     pub fn new(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let manager = DuckdbConnectionManager::file(path)?;
         let pool = r2d2::Pool::new(manager)?;
-        Ok(Self {
-            path: path.to_owned(),
-            connections: pool,
-        })
+        Ok(Self { connections: pool })
     }
 
     /// 根据用户名，返回用户ID。
@@ -34,9 +30,38 @@ impl DBAgent {
         }
     }
 
-    /// 注册新用户，返回用户ID。
-    pub fn register(&self, user_name: &str) -> Result<Option<i64>, Box<dyn std::error::Error>> {
-        Ok(Some(0))
+    /// 注册新用户，返回用户ID。若用户已经存在，则直接返回用户ID。
+    pub fn register(
+        &self,
+        user_name: &str,
+        credit: f64,
+    ) -> Result<i64, Box<dyn std::error::Error>> {
+        // 该用户是否已经存在？
+        if let Some(guest_id) = self.get_user_id(user_name)? {
+            return Ok(guest_id);
+        };
+
+        // 插入该数据
+        let db = self.connections.get()?;
+        let sql = format!("INSERT INTO guests (name, credit) VALUES (?, ?)");
+        db.execute(&sql, params![user_name, credit])?;
+
+        // 确认并返回ID
+        let mut stmt = db.prepare("SELECT id FROM guests WHERE name = ?")?;
+        let rows = stmt.query_and_then([user_name], |row| row.get::<_, i64>(0))?;
+        let ids = rows
+            .into_iter()
+            .filter(|x| x.is_ok())
+            .map(|x| x.unwrap())
+            .collect::<Vec<i64>>();
+        if ids.is_empty() {
+            return Err(Box::new(error::Error::new(format!(
+                "添加新用户到数据库失败。无法找到该用户：{}",
+                user_name
+            ))));
+        }
+
+        Ok(*ids.get(0).unwrap())
     }
 }
 
