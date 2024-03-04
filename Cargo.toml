@@ -9,8 +9,9 @@ axum = "0.7.4"
 base16ct = { version = "0.2.0", features = ["alloc"] }
 base64 = "0.21.7"
 cbc = { version = "0.1.2", features = ["alloc"] }
-duckdb = { version = "0.10.0", features = ["bundled"] }
+duckdb = { version = "0.10.0", features = ["bundled", "r2d2"] }
 envy = "0.4.2"
+r2d2 = "0.8.10"
 rand = "0.8.5"
 reqwest = "0.11.24"
 serde = { version = "1.0.195", features = ["derive"] }

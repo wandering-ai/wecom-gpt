@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_xml_rs::from_str;
 use std::collections::HashMap;
+use std::path::Path;
 use tokio::sync::RwLock;
 
 // 企业微信加解密模块
@@ -23,6 +24,9 @@ use super::providers::openai::{ChatResponse, OpenAiAgent};
 // 客户抽象
 use super::guest::{Guest, Message, MessageRole};
 
+/// 数据库模块
+use super::database::DBAgent;
+
 /// Agent负责协调用户与AI之间的交互过程
 pub struct Agent {
     app_token: String,
@@ -30,6 +34,7 @@ pub struct Agent {
     ai_agent: OpenAiAgent,
     crypto_agent: CryptoAgent,
     wecom_agent: WecomAgent,
+    db_agent: DBAgent,
 }
 
 impl Agent {
@@ -41,14 +46,21 @@ impl Agent {
         secret: &str,
         oai_endpoint: &str,
         oai_key: &str,
-    ) -> Self {
-        Self {
+        db_path: &Path,
+    ) -> Result<Self, Error> {
+        let db_agent = DBAgent::new(db_path.to_str().expect("Database path should be valid"));
+        if let Err(e) = db_agent {
+            return Err(Error::new(format!("数据库初始化失败：{}", e)));
+        }
+
+        Ok(Self {
             app_token: String::from(app_token),
             guest_list: RwLock::new(HashMap::<String, Guest>::new()),
             ai_agent: OpenAiAgent::new(oai_endpoint, oai_key),
             crypto_agent: wecom_crypto::CryptoAgent::new(b64encoded_aes_key),
             wecom_agent: WecomAgent::new(corp_id, secret),
-        }
+            db_agent: db_agent.expect("Database should be initialized"),
+        })
     }
 
     /// 配合企业微信，验证服务器地址的有效性。

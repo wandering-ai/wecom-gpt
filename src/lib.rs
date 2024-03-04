@@ -25,16 +25,22 @@ pub fn app(
     secret: &str,
     oai_endpoint: &str,
     oai_key: &str,
+    db_path: &str,
 ) -> Router {
     // 初始化APP agent。
-    let app_agent = Agent::new(
+    let db_path = std::path::Path::new(db_path);
+    let app_agent = match Agent::new(
         app_token,
         b64encoded_aes_key,
         corp_id,
         secret,
         oai_endpoint,
         oai_key,
-    );
+        db_path,
+    ) {
+        Ok(agent) => agent,
+        Err(e) => panic!("初始化应用错误：{e}"),
+    };
 
     // Init a router with this shared state.
     let state = Arc::new(AppState { app_agent });

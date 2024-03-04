@@ -32,6 +32,7 @@ async fn main() {
         &c.corp_secret,
         &c.azure_openai_endpoint,
         &c.azure_openai_api_key,
+        "duck.db",
     );
 
     tracing::info!("Listening on port 8088..");
