@@ -1,6 +1,15 @@
 //! DBAgent负责将数据写入与读出数据库
-use duckdb::{params, DuckdbConnectionManager};
+mod schema;
+
 use r2d2::Pool;
+
+pub struct User {
+    id: i64,
+    name: String,
+    credit: f64,
+    created_at: String,
+    updated_at: String,
+}
 
 pub struct DBAgent {
     connections: Pool<DuckdbConnectionManager>,
@@ -14,20 +23,28 @@ impl DBAgent {
         Ok(Self { connections: pool })
     }
 
-    /// 根据用户名，返回用户ID。
-    pub fn get_user_id(&self, user_name: &str) -> Result<Option<i64>, Box<dyn std::error::Error>> {
+    /// 根据用户名获取用户
+    pub fn get_user(&self, by_name: &str) -> Result<Option<User>, Box<dyn std::error::Error>> {
         let db = self.connections.get()?;
-        let sql = format!("SELECT id, name FROM guests WHERE name = user_name");
+        let sql = format!(
+            "SELECT id, name, credit, created_at, updated_at FROM guests WHERE name = user_name"
+        );
         let mut stmt = db.prepare(&sql)?;
-        let query_result = stmt.query_map([], |row| Ok((row.get(0), row.get(1))))?;
 
-        match query_result.into_iter().find(|x| {
-            x.as_ref()
-                .is_ok_and(|x| x.1.as_ref().is_ok_and(|u: &String| u == user_name))
-        }) {
-            Some(x) => Ok(Some(x.unwrap().0.unwrap())),
-            None => Ok(None),
+        let results = stmt.query_map([], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                credit: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        let users: Vec<_> = results.map(|x| x.unwrap()).collect();
+        if users.is_empty() {
+            return Ok(None);
         }
+        Ok(Some(users[0]))
     }
 
     /// 注册新用户，返回用户ID。若用户已经存在，则直接返回用户ID。
@@ -35,15 +52,17 @@ impl DBAgent {
         &self,
         user_name: &str,
         credit: f64,
-    ) -> Result<i64, Box<dyn std::error::Error>> {
+    ) -> Result<User, Box<dyn std::error::Error>> {
         // 该用户是否已经存在？
-        if let Some(guest_id) = self.get_user_id(user_name)? {
-            return Ok(guest_id);
+        if let Some(user) = self.get_user(user_name)? {
+            return Ok(user);
         };
 
         // 插入该数据
         let db = self.connections.get()?;
-        let sql = format!("INSERT INTO guests (name, credit) VALUES (?, ?)");
+        let sql = format!(
+            "INSERT INTO guests (name, credit, created_at, updated_at) VALUES (?, ?, ?, ?)"
+        );
         db.execute(&sql, params![user_name, credit])?;
 
         // 确认并返回ID
