@@ -1,7 +1,7 @@
 -- 初始化用户表
 CREATE TABLE guests (
     id INT NOT NULL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
+    name VARCHAR(255) UNIQUE NOT NULL,
     credit DOUBLE NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
@@ -30,16 +30,16 @@ CREATE TABLE conversations (
 -- 初始化消息类型表
 CREATE TABLE msg_types (
     id INT NOT NULL PRIMARY KEY,
-    name VARCHAR NOT NULL
+    name VARCHAR UNIQUE NOT NULL
 );
 -- 初始化消息内容类型表
 CREATE TABLE content_types (
     id INT NOT NULL PRIMARY KEY,
-    name VARCHAR NOT NULL
+    name VARCHAR UNIQUE NOT NULL
 );
 -- 初始化消息表
 CREATE TABLE messages (
-    id INT NOT NULL PRIMARY KEY,
+    id BIGINT NOT NULL PRIMARY KEY,
     conversation_id INT NOT NULL REFERENCES conversations(id),
     created_at DATETIME NOT NULL,
     content TEXT NOT NULL,
