@@ -1,13 +1,17 @@
 //! DBAgent负责将数据写入与读出数据库
+mod models;
 mod schema;
+
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
+use chrono::Utc;
+use models::{Guest, NewGuest};
+
 pub struct DBAgent {
-    database_url: String,
     connections: Pool<ConnectionManager<SqliteConnection>>,
 }
 
@@ -25,10 +29,47 @@ impl DBAgent {
             .get()
             .expect("DB connection should be fetched from pool");
         conn.run_pending_migrations(MIGRATIONS)?;
-        Ok(Self {
-            database_url: database_url.to_owned(),
-            connections,
-        })
+        Ok(Self { connections })
+    }
+
+    /// 根据用户名获取用户。企业微信用户名具备唯一性。
+    pub fn get_user(&self, by_name: &str) -> Result<Option<Guest>, Box<dyn std::error::Error>> {
+        use self::schema::guests::dsl::*;
+        let connection = &mut self.connections.get()?;
+        Ok(guests
+            .filter(name.eq(by_name))
+            .select(Guest::as_select())
+            .first(connection)
+            .optional()?)
+    }
+
+    /// 注册新用户，并返回该用户。若用户已经存在，则直接返回用户。
+    pub fn register(
+        &self,
+        user_name: &str,
+        initial_credit: f64,
+    ) -> Result<Guest, Box<dyn std::error::Error>> {
+        use self::schema::guests::dsl::*;
+
+        // 该用户是否已经存在？
+        if let Some(user) = self.get_user(user_name)? {
+            return Ok(user);
+        };
+
+        // 插入该数据
+        let connection = &mut self.connections.get()?;
+        let new_guest = NewGuest {
+            name: user_name,
+            credit: initial_credit,
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
+
+        // 返回结果
+        Ok(diesel::insert_into(guests)
+            .values(&new_guest)
+            .returning(Guest::as_returning())
+            .get_result(connection)?)
     }
 }
 
