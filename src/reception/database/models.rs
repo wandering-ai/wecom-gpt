@@ -2,7 +2,7 @@ use super::schema;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 
-#[derive(Queryable, Selectable)]
+#[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
 #[diesel(table_name = schema::guests)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Guest {
@@ -15,7 +15,6 @@ pub struct Guest {
 
 #[derive(Insertable)]
 #[diesel(table_name = schema::guests)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct NewGuest<'a> {
     pub name: &'a str,
     pub credit: f64,

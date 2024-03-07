@@ -10,6 +10,7 @@ struct Configuration {
     corp_secret: String,
     azure_openai_endpoint: String,
     azure_openai_api_key: String,
+    database_url: String,
 }
 
 #[tokio::main]
@@ -32,7 +33,7 @@ async fn main() {
         &c.corp_secret,
         &c.azure_openai_endpoint,
         &c.azure_openai_api_key,
-        "zoo.db",
+        &c.database_url,
     );
 
     tracing::info!("Listening on port 8088..");

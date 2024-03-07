@@ -34,7 +34,7 @@ pub struct Agent {
     ai_agent: OpenAiAgent,
     crypto_agent: CryptoAgent,
     wecom_agent: WecomAgent,
-    db_agent: DBAgent,
+    clerk: DBAgent,
 }
 
 impl Agent {
@@ -59,7 +59,7 @@ impl Agent {
             ai_agent: OpenAiAgent::new(oai_endpoint, oai_key),
             crypto_agent: wecom_crypto::CryptoAgent::new(b64encoded_aes_key),
             wecom_agent: WecomAgent::new(corp_id, secret),
-            db_agent: db_agent.expect("Database should be initialized"),
+            clerk: db_agent.expect("Database should be initialized"),
         })
     }
 
