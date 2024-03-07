@@ -16,7 +16,7 @@ CREATE TABLE assistants (
     id INTEGER NOT NULL PRIMARY KEY,
     name VARCHAR NOT NULL,
     agent_id INTEGER NOT NULL,
-    provider_id INTEGEREGER REFERENCES providers(id)
+    provider_id INTEGER NOT NULL REFERENCES providers(id)
 );
 -- 初始化会话表
 CREATE TABLE conversations (
