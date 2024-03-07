@@ -70,7 +70,11 @@ impl DBAgent {
     }
 
     /// 更新用户余额，并返回更新后的结果。
-    pub fn update(&self, user: &Guest, cost: f64) -> Result<Guest, Box<dyn std::error::Error>> {
+    pub fn update_user(
+        &self,
+        user: &Guest,
+        cost: f64,
+    ) -> Result<Guest, Box<dyn std::error::Error>> {
         use self::schema::guests::dsl::*;
         let connection = &mut self.connections.get()?;
         let post_guest = diesel::update(guests.find(user.id))
@@ -186,10 +190,10 @@ mod tests {
             .register("yinguobing")
             .expect("User registration should succeed");
         let _ = agent
-            .update(&user, 42.0)
+            .update_user(&user, 42.0)
             .expect("User update should succeed");
         let post_user = agent
-            .update(&user, -3.14)
+            .update_user(&user, -3.14)
             .expect("User update should succeed");
         assert_eq!(user.credit + 42.0 - 3.14, post_user.credit);
         assert_ne!(post_user.updated_at, post_user.created_at);
