@@ -9,7 +9,7 @@ use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 use chrono::Utc;
-use models::{Guest, NewGuest};
+use models::{Guest, NewGuest, Provider};
 
 pub struct DBAgent {
     connections: Pool<ConnectionManager<SqliteConnection>>,
@@ -24,11 +24,21 @@ impl DBAgent {
         let manager = ConnectionManager::<SqliteConnection>::new(database_url);
         let connections = Pool::builder().build(manager)?;
 
-        // Init the database with diesel
-        let mut conn = connections
-            .get()
-            .expect("DB connection should be fetched from pool");
-        conn.run_pending_migrations(MIGRATIONS)?;
+        // 初始化数据库结构
+        {
+            let conn = &mut connections.get()?;
+            conn.run_pending_migrations(MIGRATIONS)?;
+        }
+
+        // 填充AI供应商
+        {
+            let conn = &mut connections.get()?;
+            let current_providers = vec![schema::providers::name.eq("openai/gpt4-32k")];
+            diesel::insert_into(schema::providers::table)
+                .values(&current_providers)
+                .execute(conn)?;
+        }
+
         Ok(Self { connections })
     }
 
@@ -102,6 +112,13 @@ impl DBAgent {
             .expect("User should be deleted without error");
         Ok(num_deleted)
     }
+
+    /// 获取AI供应商信息
+    pub fn get_ai_providers(&self) -> Result<Vec<Provider>, Box<dyn std::error::Error>> {
+        use self::schema::providers::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(providers.load(conn)?)
+    }
 }
 
 mod error {
@@ -130,10 +147,18 @@ mod error {
 #[cfg(test)]
 mod tests {
     use super::DBAgent;
+    use super::Provider;
     #[test]
     fn test_db_init() {
         let agent = DBAgent::new(":memory:");
         assert!(agent.is_ok());
+        assert_eq!(
+            agent.unwrap().get_ai_providers().unwrap(),
+            vec![Provider {
+                id: 1,
+                name: "openai/gpt4-32k".to_string()
+            }]
+        )
     }
 
     #[test]
