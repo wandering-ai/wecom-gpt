@@ -5,7 +5,7 @@ diesel::table! {
         id -> Integer,
         name -> Text,
         agent_id -> Integer,
-        provider_id -> Nullable<Integer>,
+        provider_id -> Integer,
     }
 }
 
