@@ -93,7 +93,19 @@ pub struct NewConversation {
 #[diesel(belongs_to(Conversation))]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Message {
-    pub id: i64,
+    pub id: i32,
+    pub conversation_id: i32,
+    pub created_at: NaiveDateTime,
+    pub content: String,
+    pub cost: f64,
+    pub message_type: i32,
+    pub content_type: i32,
+}
+// 用于插入表的新消息
+#[derive(Insertable)]
+#[diesel(table_name = schema::messages)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct NewMessage {
     pub conversation_id: i32,
     pub created_at: NaiveDateTime,
     pub content: String,

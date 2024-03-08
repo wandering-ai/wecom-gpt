@@ -39,7 +39,7 @@ diesel::table! {
 
 diesel::table! {
     messages (id) {
-        id -> BigInt,
+        id -> Integer,
         conversation_id -> Integer,
         created_at -> Timestamp,
         content -> Text,

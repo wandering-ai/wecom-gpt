@@ -8,19 +8,19 @@ CREATE TABLE guests (
 );
 -- 初始化AI供应商表
 CREATE TABLE providers (
-    id INTEGER NOT NULL PRIMARY KEY,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     name VARCHAR NOT NULL
 );
 -- 初始化企业微信应用表
 CREATE TABLE assistants (
-    id INTEGER NOT NULL PRIMARY KEY,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     name VARCHAR NOT NULL,
     agent_id INTEGER NOT NULL UNIQUE,
     provider_id INTEGER NOT NULL REFERENCES providers(id)
 );
 -- 初始化会话表
 CREATE TABLE conversations (
-    id INTEGER NOT NULL PRIMARY KEY,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     guest_id INTEGER NOT NULL REFERENCES guests(id),
     assistant_id INTEGER NOT NULL REFERENCES assistants(id),
     active BOOLEAN NOT NULL,
@@ -29,17 +29,17 @@ CREATE TABLE conversations (
 );
 -- 初始化消息类型表
 CREATE TABLE msg_types (
-    id INTEGER NOT NULL PRIMARY KEY,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     name VARCHAR UNIQUE NOT NULL
 );
 -- 初始化消息内容类型表
 CREATE TABLE content_types (
-    id INTEGER NOT NULL PRIMARY KEY,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     name VARCHAR UNIQUE NOT NULL
 );
 -- 初始化消息表
 CREATE TABLE messages (
-    id BIGINT NOT NULL PRIMARY KEY,
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id),
     created_at DATETIME NOT NULL,
     content TEXT NOT NULL,

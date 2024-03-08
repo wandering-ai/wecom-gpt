@@ -10,7 +10,8 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 use chrono::Utc;
 use models::{
-    Assistant, ContentType, Conversation, Guest, MessageType, NewConversation, NewGuest, Provider,
+    Assistant, ContentType, Conversation, Guest, Message, MessageType, NewConversation, NewGuest,
+    NewMessage, Provider,
 };
 
 pub struct DBAgent {
@@ -251,10 +252,60 @@ impl DBAgent {
     }
 
     /// 删除会话记录。返回本次删除会话记录的个数。
+    /// 若要重新开始会话，请使用create_conversation激活新会话。旧会话数据会自动失活。
+    /// 本操作会永久删除数据，谨慎操作！
     pub fn remove_conversation(&self, by_id: i32) -> Result<usize, Box<dyn std::error::Error>> {
         use schema::conversations::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(diesel::delete(conversations.find(by_id)).execute(conn)?)
+    }
+
+    /// 新增消息记录
+    pub fn create_message(
+        &self,
+        conversation: &Conversation,
+        msg_role: &MessageType,
+        content: &str,
+        content_type: &ContentType,
+        credit_cost: f64,
+    ) -> Result<Message, Box<dyn std::error::Error>> {
+        use schema::messages;
+        let conn = &mut self.connections.get()?;
+        let timestamp = Utc::now().naive_utc();
+        let new_msg = NewMessage {
+            conversation_id: conversation.id,
+            created_at: timestamp,
+            content: content.to_owned(),
+            cost: credit_cost,
+            message_type: msg_role.id,
+            content_type: content_type.id,
+        };
+        Ok(diesel::insert_into(messages::table)
+            .values(&new_msg)
+            .returning(Message::as_returning())
+            .get_result(conn)?)
+    }
+
+    /// 根据会话ID，获取全部消息
+    pub fn get_messages_by_conversation(
+        &self,
+        conv: &Conversation,
+    ) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
+        use schema::messages::dsl::*;
+        let conn = &mut self.connections.get()?;
+        let mut msgs: Vec<Message> = Message::belonging_to(conv)
+            .select(Message::as_select())
+            .load(conn)?;
+        msgs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(msgs)
+    }
+
+    /// 删除消息记录。返回本次删除的个数。
+    /// 本操作会永久删除数据，谨慎操作！
+    pub fn remove_message(&self, by_id: i32) -> Result<usize, Box<dyn std::error::Error>> {
+        use schema::messages::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(diesel::delete(messages.find(by_id)).execute(conn)?)
     }
 }
 
@@ -414,6 +465,93 @@ mod tests {
         );
         assert!(agent.get_conversation(1).is_err());
         assert!(agent.get_active_conversation(&guest).unwrap().active);
+    }
+
+    // 测试消息记录
+    #[test]
+    fn test_messages() {
+        let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
+        let guest = agent
+            .register("yinguobing")
+            .expect("User registration should not fail");
+        let assistant = agent
+            .get_assistant(1)
+            .expect("At least one assistant should be ready by default");
+        let conversation = agent
+            .create_conversation(&guest, &assistant)
+            .expect("Conversation should be created without error");
+        let content_types = agent
+            .get_content_types()
+            .expect("Content types should be ready after db initialization");
+        let msg_types = agent
+            .get_msg_types()
+            .expect("Message types should be ready after db initialization");
+
+        // Create
+        let system_content = "You are a helpful assistant.";
+        let content_type = content_types
+            .iter()
+            .find(|x| x.name == "text")
+            .expect("`text` should exist as default content type");
+        let msg_role = msg_types
+            .iter()
+            .find(|x| x.name == "system")
+            .expect("`system` should exist as built in type");
+        let sys_msg = agent
+            .create_message(&conversation, msg_role, system_content, content_type, 0.0)
+            .expect("System message should be created");
+
+        let user_content = "你是谁？";
+        let content_type = content_types
+            .iter()
+            .find(|x| x.name == "text")
+            .expect("`text` should exist as default content type");
+        let msg_role = msg_types
+            .iter()
+            .find(|x| x.name == "user")
+            .expect("`user` should exist as built in type");
+        let user_msg = agent
+            .create_message(&conversation, msg_role, user_content, content_type, 0.06)
+            .expect("User message should be created");
+
+        let assistant_content = "我是小白，你的智能助手。";
+        let content_type = content_types
+            .iter()
+            .find(|x| x.name == "text")
+            .expect("`text` should exist as default content type");
+        let msg_role = msg_types
+            .iter()
+            .find(|x| x.name == "assistant")
+            .expect("`Assistant` should exist as built in type");
+        let assistant_msg = agent
+            .create_message(
+                &conversation,
+                msg_role,
+                assistant_content,
+                content_type,
+                3.14,
+            )
+            .expect("Assistant message should be created");
+
+        assert_eq!(sys_msg.conversation_id, conversation.id);
+        assert_eq!(user_msg.cost, 0.06);
+        assert_eq!(assistant_msg.id, 3);
+
+        // Remove
+        assert_eq!(agent.remove_message(3).unwrap(), 1);
+
+        // Multiple users
+        let guest2 = agent.register("robin").unwrap();
+        let conv_2 = agent.create_conversation(&guest2, &assistant).unwrap();
+        let msg_role = msg_types
+            .iter()
+            .find(|x| x.name == "user")
+            .expect("`user` should exist as built in type");
+        let msg_2 = agent
+            .create_message(&conv_2, msg_role, "hello, robin", content_type, 1.2)
+            .unwrap();
+
+        assert_eq!(msg_2.id, 4);
     }
 
     // 测试助手的初始化结果
