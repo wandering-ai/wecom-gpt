@@ -9,7 +9,9 @@ use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 use chrono::Utc;
-use models::{Guest, NewGuest, Provider};
+use models::{
+    Assistant, ContentType, Conversation, Guest, MessageType, NewConversation, NewGuest, Provider,
+};
 
 pub struct DBAgent {
     connections: Pool<ConnectionManager<SqliteConnection>>,
@@ -36,6 +38,46 @@ impl DBAgent {
             let current_providers = vec![schema::providers::name.eq("openai/gpt4-32k")];
             diesel::insert_into(schema::providers::table)
                 .values(&current_providers)
+                .execute(conn)?;
+        }
+
+        // 填充AI助手
+        {
+            use schema::assistants::dsl::*;
+            let conn = &mut connections.get()?;
+            let current_assistants =
+                vec![(name.eq("小白"), agent_id.eq(1000002), provider_id.eq(1))];
+            diesel::insert_into(assistants)
+                .values(&current_assistants)
+                .execute(conn)?;
+        }
+
+        // 填充消息类型
+        {
+            use schema::msg_types::dsl::*;
+            let conn = &mut connections.get()?;
+            let message_types = vec![name.eq("system"), name.eq("user"), name.eq("assistant")];
+            diesel::insert_into(msg_types)
+                .values(&message_types)
+                .execute(conn)?;
+        }
+
+        // 填充消息内容类型
+        {
+            use schema::content_types::dsl::*;
+            let conn = &mut connections.get()?;
+            let cnt_types = vec![
+                name.eq("text"),
+                name.eq("image"),
+                name.eq("voice"),
+                name.eq("video"),
+                name.eq("file"),
+                name.eq("markdown"),
+                name.eq("news"),
+                name.eq("textcard"),
+            ];
+            diesel::insert_into(content_types)
+                .values(&cnt_types)
                 .execute(conn)?;
         }
 
@@ -118,6 +160,101 @@ impl DBAgent {
         use self::schema::providers::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(providers.load(conn)?)
+    }
+
+    /// 获取AI助手
+    pub fn get_assistant(&self, by_id: i32) -> Result<Assistant, Box<dyn std::error::Error>> {
+        use self::schema::assistants::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(assistants.find(by_id).first(conn)?)
+    }
+
+    /// 获取AI助手 - 通过AgentID
+    pub fn get_assistant_by_agent_id(
+        &self,
+        by_agent_id: i32,
+    ) -> Result<Assistant, Box<dyn std::error::Error>> {
+        use self::schema::assistants::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(assistants
+            .filter(agent_id.eq(by_agent_id))
+            .select(Assistant::as_select())
+            .first(conn)?)
+    }
+
+    /// 获取消息角色
+    pub fn get_msg_types(&self) -> Result<Vec<MessageType>, Box<dyn std::error::Error>> {
+        use self::schema::msg_types::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(msg_types.load(conn)?)
+    }
+
+    /// 获取消息内容类型
+    pub fn get_content_types(&self) -> Result<Vec<ContentType>, Box<dyn std::error::Error>> {
+        use self::schema::content_types::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(content_types.load(conn)?)
+    }
+
+    /// 创建会话记录
+    pub fn create_conversation(
+        &self,
+        for_user: &Guest,
+        with_assistant: &Assistant,
+    ) -> Result<Conversation, Box<dyn std::error::Error>> {
+        use schema::conversations::dsl::*;
+        let timestamp = Utc::now().naive_utc();
+
+        // Deactivate any existing active conversation
+        {
+            let existing_convs = Conversation::belonging_to(for_user).filter(active.eq(true));
+            let conn = &mut self.connections.get()?;
+            diesel::update(existing_convs)
+                .set((active.eq(false), updated_at.eq(timestamp)))
+                .execute(conn)?;
+        }
+
+        // Insert new one
+        {
+            let new_conv = NewConversation {
+                guest_id: for_user.id,
+                assistant_id: with_assistant.id,
+                active: true,
+                created_at: timestamp,
+                updated_at: timestamp,
+            };
+            let conn = &mut self.connections.get()?;
+            Ok(diesel::insert_into(conversations)
+                .values(&new_conv)
+                .returning(Conversation::as_returning())
+                .get_result(conn)?)
+        }
+    }
+
+    /// 按照ID获取会话记录
+    pub fn get_conversation(&self, by_id: i32) -> Result<Conversation, Box<dyn std::error::Error>> {
+        use schema::conversations::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(conversations.find(by_id).first(conn)?)
+    }
+
+    /// 获取用户当前活跃的会话记录
+    pub fn get_active_conversation(
+        &self,
+        by_user: &Guest,
+    ) -> Result<Conversation, Box<dyn std::error::Error>> {
+        use schema::conversations::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(Conversation::belonging_to(by_user)
+            .filter(active.eq(true))
+            .first(conn)?)
+    }
+
+    /// 删除会话记录。返回本次删除会话记录的个数。
+    pub fn remove_conversation(&self, by_id: i32) -> Result<usize, Box<dyn std::error::Error>> {
+        use schema::conversations::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(diesel::delete(conversations.find(by_id)).execute(conn)?)
     }
 }
 
@@ -238,5 +375,77 @@ mod tests {
             .expect("User should be removed without error");
         assert_eq!(del_count, 1);
         assert_eq!(agent.get_user("yinguobing").unwrap(), None);
+    }
+
+    // 测试会话记录
+    #[test]
+    fn test_conversation() {
+        let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
+
+        let guest = agent
+            .register("yinguobing")
+            .expect("User registration should not fail");
+        let assistant = agent
+            .get_assistant(1)
+            .expect("At least one assistant should be ready by default");
+
+        // Create
+        let conv1 = agent
+            .create_conversation(&guest, &assistant)
+            .expect("Conversation should be created without error");
+        let conv2 = agent
+            .create_conversation(&guest, &assistant)
+            .expect("Conversation should be created without error");
+
+        // Get active conversation
+        let active_conv = agent
+            .get_active_conversation(&guest)
+            .expect("Active conversation should always be ready");
+
+        assert_ne!(active_conv.updated_at, conv1.updated_at);
+        assert_eq!(active_conv.updated_at, conv2.updated_at);
+
+        // Delete old conversation
+        assert_eq!(
+            agent
+                .remove_conversation(1)
+                .expect("Conversation should be removed without error"),
+            1
+        );
+        assert!(agent.get_conversation(1).is_err());
+        assert!(agent.get_active_conversation(&guest).unwrap().active);
+    }
+
+    // 测试助手的初始化结果
+    #[test]
+    fn test_assistant_init() {
+        let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
+        let assistant = agent.get_assistant_by_agent_id(1000002).unwrap();
+        assert_eq!(assistant.id, 1);
+        assert_eq!(assistant.name, "小白");
+    }
+
+    // 测试消息角色类型的初始化结果
+    #[test]
+    fn test_msg_types_init() {
+        let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
+        let msg_types = agent.get_msg_types().unwrap();
+        assert_eq!(
+            vec![
+                super::MessageType {
+                    id: 1,
+                    name: "system".to_string(),
+                },
+                super::MessageType {
+                    id: 2,
+                    name: "user".to_string(),
+                },
+                super::MessageType {
+                    id: 3,
+                    name: "assistant".to_string(),
+                }
+            ],
+            msg_types
+        );
     }
 }
