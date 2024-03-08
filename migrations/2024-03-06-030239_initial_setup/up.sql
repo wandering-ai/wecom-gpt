@@ -4,7 +4,8 @@ CREATE TABLE guests (
     name VARCHAR(255) UNIQUE NOT NULL,
     credit DOUBLE NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
+    updated_at TIMESTAMP NOT NULL,
+    admin BOOLEAN NOT NULL DEFAULT FALSE
 );
 -- 初始化AI供应商表
 CREATE TABLE providers (

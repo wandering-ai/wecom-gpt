@@ -12,6 +12,7 @@ pub struct Guest {
     pub credit: f64,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub admin: bool,
 }
 
 #[derive(Insertable)]

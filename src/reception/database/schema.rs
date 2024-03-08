@@ -34,6 +34,7 @@ diesel::table! {
         credit -> Double,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        admin -> Bool,
     }
 }
 

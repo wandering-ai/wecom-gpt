@@ -127,6 +127,7 @@ impl DBAgent {
         &self,
         user: &Guest,
         cost: f64,
+        as_admin: bool,
     ) -> Result<Guest, Box<dyn std::error::Error>> {
         use self::schema::guests::dsl::*;
         let connection = &mut self.connections.get()?;
@@ -134,6 +135,7 @@ impl DBAgent {
             .set((
                 credit.eq(credit + cost),
                 updated_at.eq(Utc::now().naive_utc()),
+                admin.eq(as_admin),
             ))
             .returning(Guest::as_returning())
             .get_result(connection)?;
@@ -397,19 +399,20 @@ mod tests {
     }
 
     #[test]
-    fn test_update_user_credit() {
+    fn test_user_update() {
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let user = agent
             .register("yinguobing")
             .expect("User registration should succeed");
         let _ = agent
-            .update_user(&user, 42.0)
+            .update_user(&user, 42.0, false)
             .expect("User update should succeed");
         let post_user = agent
-            .update_user(&user, -3.14)
+            .update_user(&user, -3.14, true)
             .expect("User update should succeed");
         assert_eq!(user.credit + 42.0 - 3.14, post_user.credit);
         assert_ne!(post_user.updated_at, post_user.created_at);
+        assert_eq!(post_user.admin, true);
     }
 
     #[test]
