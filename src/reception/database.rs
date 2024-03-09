@@ -2,17 +2,18 @@
 mod models;
 mod schema;
 
+use chrono::Utc;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
-pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
-
-use chrono::Utc;
 use models::{
     Assistant, ContentType, Conversation, Guest, Message, MessageType, NewConversation, NewGuest,
     NewMessage, Provider,
 };
+use std::env;
+
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 pub struct DBAgent {
     connections: Pool<ConnectionManager<SqliteConnection>>,
@@ -31,6 +32,24 @@ impl DBAgent {
         {
             let conn = &mut connections.get()?;
             conn.run_pending_migrations(MIGRATIONS)?;
+        }
+
+        // 填充默认的管理员用户
+        {
+            use schema::guests;
+            let admin = env::var("ADMIN").expect("Environment variable $ADMIN must be set");
+            let timestamp = Utc::now().naive_utc();
+            let conn = &mut connections.get()?;
+            diesel::insert_into(guests::table)
+                .values((
+                    guests::id.eq(1),
+                    guests::name.eq(admin),
+                    guests::credit.eq(0.0),
+                    guests::created_at.eq(timestamp),
+                    guests::updated_at.eq(timestamp),
+                    guests::admin.eq(true),
+                ))
+                .execute(conn)?;
         }
 
         // 填充AI供应商
@@ -340,15 +359,23 @@ mod tests {
     use super::Provider;
     #[test]
     fn test_db_init() {
-        let agent = DBAgent::new(":memory:");
-        assert!(agent.is_ok());
+        // 准备工作
+        std::env::set_var("ADMIN", "administrator");
+        // 初始化
+        let agent = DBAgent::new(":memory:").expect("Agent init can not fail");
+        // 默认Assistant
         assert_eq!(
-            agent.unwrap().get_ai_providers().unwrap(),
+            agent.get_ai_providers().unwrap(),
             vec![Provider {
                 id: 1,
                 name: "openai/gpt4-32k".to_string()
             }]
-        )
+        );
+        // 默认ADMIN
+        assert_eq!(
+            agent.get_user("administrator").unwrap().unwrap().admin,
+            true
+        );
     }
 
     #[test]
@@ -393,7 +420,7 @@ mod tests {
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         // Fetch an invalid user
         let registered_user = agent
-            .get_user("yinguobing")
+            .get_user("NotExisted")
             .expect("Existing user should be got without any error");
         assert_eq!(registered_user, None);
     }
