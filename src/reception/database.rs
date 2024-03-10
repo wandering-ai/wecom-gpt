@@ -37,7 +37,7 @@ impl DBAgent {
         // 填充默认的管理员用户
         {
             use schema::guests;
-            let admin = env::var("ADMIN").expect("Environment variable $ADMIN must be set");
+            let admin = env::var("APP_ADMIN").expect("Environment variable $APP_ADMIN must be set");
             let timestamp = Utc::now().naive_utc();
             let conn = &mut connections.get()?;
             diesel::insert_into(guests::table)
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn test_db_init() {
         // 初始化
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Agent init can not fail");
         // 默认Assistant
         assert_eq!(
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_user_register() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
 
         // Register new users
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_user_duplicate_register() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
 
         // Register new users
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_user_invalid_get() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         // Fetch an invalid user
         let registered_user = agent
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_user_update() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let user = agent
             .register("yinguobing")
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_user_remove() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let _ = agent
             .register("yinguobing")
@@ -533,7 +533,7 @@ mod tests {
     // 测试会话记录
     #[test]
     fn test_conversation() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
 
         let guest = agent
@@ -577,7 +577,7 @@ mod tests {
     // 测试消息记录
     #[test]
     fn test_message() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let guest = agent
             .register("yinguobing")
@@ -665,7 +665,7 @@ mod tests {
     // 测试助手的初始化结果
     #[test]
     fn test_assistant_init() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let assistant = agent.get_assistant_by_agent_id(1000002).unwrap();
         assert_eq!(assistant.id, 1);
@@ -675,7 +675,7 @@ mod tests {
     // 测试消息角色类型的初始化结果
     #[test]
     fn test_msg_type_init() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let msg_types = agent.get_msg_types().unwrap();
         assert_eq!(
@@ -700,7 +700,7 @@ mod tests {
     // 测试消息角色获取
     #[test]
     fn test_msg_type_get() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         assert!(agent.get_msg_type(5).is_err());
         assert_eq!(
@@ -723,7 +723,7 @@ mod tests {
     // 测试内容类型的初始化结果
     #[test]
     fn test_content_type_init() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let content_types = agent.get_content_types().unwrap();
         assert_eq!(
@@ -768,7 +768,7 @@ mod tests {
     // 获取消息内容类型
     #[test]
     fn test_content_type_get() {
-        std::env::set_var("ADMIN", "administrator");
+        std::env::set_var("APP_ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         assert_eq!(
             agent.get_content_type(1).unwrap(),
