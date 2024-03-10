@@ -11,7 +11,6 @@ struct Configuration {
     azure_openai_endpoint: String,
     azure_openai_api_key: String,
     database_url: String,
-    admin: String,
 }
 
 #[tokio::main]

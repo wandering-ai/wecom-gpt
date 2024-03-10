@@ -1,7 +1,7 @@
-use crate::reception::guest::{Conversation as GuestConvs, MessageRole as GuestMsgRole};
+use crate::reception::database;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::convert::From;
+use std::convert::{From, Into};
 use std::error::Error as StdError;
 
 #[derive(Debug, Clone)]
@@ -73,44 +73,27 @@ pub struct Conversation {
     messages: Vec<Message>,
 }
 
-impl Conversation {
-    // 新建一组会话记录
-    pub fn new(system_msg: Option<&str>) -> Self {
-        let mut messages = Vec::<Message>::new();
-        let sys_msg = match system_msg {
-            Some(msg) => msg,
-            None => "You are a helpful assistant.",
-        };
-        messages.push(Message::new(MessageRole::System, sys_msg.to_owned()));
-        Self { messages }
-    }
-
-    // 为当前会话记录追加一条消息
-    pub fn append(&mut self, msg: &Message) {
-        self.messages.push(msg.clone());
+impl From<Vec<database::Message>> for Conversation {
+    fn from(value: Vec<database::Message>) -> Self {
+        value.into()
     }
 }
 
-impl From<GuestConvs<'_>> for Conversation {
-    fn from(value: GuestConvs) -> Self {
+impl From<Vec<&database::Message>> for Conversation {
+    fn from(value: Vec<&database::Message>) -> Self {
         let mut messages = Vec::<Message>::new();
 
         // 首条消息应当为系统消息
         let mut msg_iter = value.iter();
         let sys_msg = match value.len() {
-            n if n > 0 => msg_iter.next().unwrap().content(),
+            n if n > 0 => &msg_iter.next().unwrap().content,
             _ => "You are a helpful assistant.",
         };
         messages.push(Message::new(MessageRole::System, sys_msg.to_owned()));
 
         // 追加剩余消息
         while let Some(msg) = msg_iter.next() {
-            let role = match msg.role() {
-                GuestMsgRole::Assistant => MessageRole::Assistant,
-                GuestMsgRole::System => MessageRole::System,
-                GuestMsgRole::User => MessageRole::User,
-            };
-            messages.push(Message::new(role, msg.content().to_owned()))
+            messages.push(Message::from(*msg));
         }
 
         Self { messages }
@@ -124,6 +107,38 @@ pub struct Message {
     content: String,
 }
 
+impl Message {
+    pub fn new(role: MessageRole, content: String) -> Self {
+        Self { role, content }
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+// 数据库消息转换为当前模块消息
+impl From<database::Message> for Message {
+    fn from(value: database::Message) -> Self {
+        value.into()
+    }
+}
+
+impl From<&database::Message> for Message {
+    fn from(value: &database::Message) -> Self {
+        Self {
+            role: match value.message_type {
+                1 => MessageRole::System,
+                2 => MessageRole::User,
+                3 => MessageRole::Assistant,
+                i32::MIN..=0_i32 | 4_i32..=i32::MAX => MessageRole::User,
+            },
+            content: value.content.clone(),
+        }
+    }
+}
+
+// 消息角色枚举
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum MessageRole {
     #[serde(rename = "system")]
@@ -134,18 +149,40 @@ pub enum MessageRole {
     Assistant,
 }
 
-impl Message {
-    pub fn new(role: MessageRole, content: String) -> Self {
-        Self { role, content }
+// 消息角色转换为数据库角色
+impl Into<database::MessageType> for MessageRole {
+    fn into(self) -> database::MessageType {
+        match self {
+            MessageRole::System => database::MessageType {
+                id: 1,
+                name: "system".to_string(),
+            },
+            MessageRole::User => database::MessageType {
+                id: 2,
+                name: "user".to_string(),
+            },
+            MessageRole::Assistant => database::MessageType {
+                id: 3,
+                name: "assistant".to_string(),
+            },
+        }
     }
+}
 
-    #[allow(dead_code)]
-    pub fn role(&self) -> &MessageRole {
-        &self.role
+// 数据库角色转换为消息角色
+impl From<database::MessageType> for MessageRole {
+    fn from(value: database::MessageType) -> Self {
+        value.into()
     }
-
-    pub fn content(&self) -> &str {
-        &self.content
+}
+impl From<&database::MessageType> for MessageRole {
+    fn from(value: &database::MessageType) -> Self {
+        match value.name.as_str() {
+            "system" => Self::System,
+            "user" => Self::User,
+            "assistant" => Self::Assistant,
+            &_ => Self::User,
+        }
     }
 }
 
@@ -174,9 +211,13 @@ impl Message {
 // }
 #[derive(Deserialize)]
 pub struct ChatResponse {
+    #[allow(dead_code)]
     id: String,
+    #[allow(dead_code)]
     object: String,
+    #[allow(dead_code)]
     created: usize,
+    #[allow(dead_code)]
     model: String,
     usage: ApiUsage,
     pub choices: Vec<ChatResult>,
@@ -193,12 +234,15 @@ impl ChatResponse {
 struct ApiUsage {
     prompt_tokens: usize,
     completion_tokens: usize,
+    #[allow(dead_code)]
     total_tokens: usize,
 }
 
 #[derive(Deserialize)]
 pub struct ChatResult {
     pub message: Message,
+    #[allow(dead_code)]
     finish_reason: String,
+    #[allow(dead_code)]
     index: usize,
 }

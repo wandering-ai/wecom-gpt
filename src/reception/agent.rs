@@ -5,9 +5,7 @@ use error::Error;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_xml_rs::from_str;
-use std::collections::HashMap;
 use std::path::Path;
-use tokio::sync::RwLock;
 
 // 企业微信加解密模块
 use wecom_crypto::CryptoAgent;
@@ -19,18 +17,14 @@ use wecom_agent::{
 };
 
 // OpenAI API
-use super::providers::openai::{ChatResponse, OpenAiAgent};
-
-// 客户抽象
-use super::guest::{Guest, Message, MessageRole};
+use super::providers::openai::{MessageRole as OaiMsgRole, OpenAiAgent};
 
 /// 数据库模块
-use super::database::DBAgent;
+use super::database::{Conversation as DBConversation, DBAgent, Guest, Message as DBMessage};
 
 /// Agent负责协调用户与AI之间的交互过程
 pub struct Agent {
     app_token: String,
-    guest_list: RwLock<HashMap<String, Guest>>,
     ai_agent: OpenAiAgent,
     crypto_agent: CryptoAgent,
     wecom_agent: WecomAgent,
@@ -55,7 +49,6 @@ impl Agent {
 
         Ok(Self {
             app_token: String::from(app_token),
-            guest_list: RwLock::new(HashMap::<String, Guest>::new()),
             ai_agent: OpenAiAgent::new(oai_endpoint, oai_key),
             crypto_agent: wecom_crypto::CryptoAgent::new(b64encoded_aes_key),
             wecom_agent: WecomAgent::new(corp_id, secret),
@@ -87,7 +80,8 @@ impl Agent {
         }
     }
 
-    // 处理用户发来的请求
+    /// 处理用户发来的请求
+    /// 目前应用的管理操作同样使用本接口来实现。故需按照用户角色与内容来协同判断用户请求的意图。
     pub async fn handle_user_request(&self, params: Query<UserMsgParams>, body: String) {
         // Extract the request body
         let body: RequestBody = from_str(&body).unwrap();
@@ -120,88 +114,158 @@ impl Agent {
         let received_msg: ReceivedMsg = xml_doc.expect("XML document should be valid.");
 
         // 谁发送的消息？
-        let user_ready = {
-            let guest_list = self.guest_list.read().await;
-            guest_list.contains_key(&received_msg.from_user_name)
+        let guest_name = &received_msg.from_user_name;
+        let guest: Guest;
+        match self.clerk.get_user(guest_name) {
+            Err(e) => {
+                tracing::error!("获取用户数据失败: {}", e);
+                return;
+            }
+            Ok(None) => {
+                tracing::warn!("用户不存在。新建用户: {guest_name}");
+                match self.clerk.register(guest_name) {
+                    Err(e) => {
+                        tracing::error!("新建用户失败: {}", e);
+                        return;
+                    }
+                    Ok(g) => {
+                        guest = g;
+                    }
+                }
+            }
+            Ok(Some(g)) => guest = g,
         };
-        tracing::debug!("User {} ready: {}", received_msg.from_user_name, user_ready);
-        if !user_ready {
-            let mut guest_list = self.guest_list.write().await;
-            guest_list.insert(
-                received_msg.from_user_name.clone(),
-                Guest::new(&received_msg.from_user_name, 1.0)
-                    .expect("Create new user should not fail."),
-            );
-            tracing::debug!("User {} created", received_msg.from_user_name);
+
+        // 是管理员消息吗？
+        // 管理员消息由管理员账户(Guest::admin=true)发送，并且内容匹配管理员指令规则。
+        // 此过程出现的任何错误，均需要告知管理员。
+        if guest.admin == true && received_msg.content.trim().starts_with("::") {
+            let sys_reply =
+                match self.handle_admin_msg(received_msg.content.trim().trim_start_matches(':')) {
+                    Ok(msg) => msg,
+                    Err(e) => format!("处理管理员消息时出错：{}", e),
+                };
+            let content = Text::new(sys_reply);
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("回复管理员消息时出错: {}", e);
+            }
+            return;
         }
 
-        // 发送账户有效？
-        {
-            let guest_list = self.guest_list.read().await;
-            let guest = guest_list
-                .get(&received_msg.from_user_name)
-                .expect("User should exist");
+        // 用户账户有效？
+        if guest.credit < 0.0 {
+            tracing::warn!("余额不足。账户{}欠款：{}。", guest.name, guest.credit.abs());
+            // 告知用户欠款详情
+            let content = Text::new(format!("余额不足。当前账户欠款：{}。", guest.credit.abs()));
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("发送欠费通知失败：{e}");
+            }
+            return;
+        }
 
-            if guest.credit() < 0.0 {
+        // 获取当前Assistant
+        let agent_id = received_msg.agent_id.parse::<i32>();
+        if let Err(e) = agent_id {
+            let err_msg = format!("转换AgentID失败：{e}");
+            tracing::error!(err_msg);
+            let content = Text::new(err_msg);
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("发送Assistant错误消息时出错: {}", e);
+            }
+            return;
+        }
+        let assistant = self.clerk.get_assistant_by_agent_id(agent_id.unwrap());
+        if let Err(e) = assistant {
+            let err_msg = format!("获取Assistant失败：{e}");
+            tracing::error!(err_msg);
+            let content = Text::new(err_msg);
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("发送Assistant错误消息时出错: {}", e);
+            }
+            return;
+        }
+
+        // 账户OK，获取用户会话记录。若会话记录不存在，则创建新记录。
+        let conversation: DBConversation;
+        match self.clerk.get_active_conversation(&guest) {
+            Err(e) => {
                 tracing::warn!(
-                    "余额不足。账户{}欠款：{}。",
-                    guest.name(),
-                    guest.credit().abs()
+                    "获取用户{}会话记录失败：{}。将为此用户创建新记录。",
+                    guest.name,
+                    e
                 );
+                match self.clerk.create_conversation(&guest, &assistant.unwrap()) {
+                    Err(e) => {
+                        let err_msg = format!("创建用户{}会话记录失败：{}。", guest.name, e);
+                        tracing::error!(err_msg);
+                        let content = Text::new(err_msg);
+                        if let Err(e) = self.reply(&received_msg, content).await {
+                            tracing::error!("发送会话错误消息时出错: {}", e);
+                        }
+                        return;
+                    }
+                    Ok(c) => conversation = c,
+                }
+            }
+            Ok(c) => conversation = c,
+        };
 
-                // 告知用户欠款详情
-                let content = Text::new(format!(
-                    "余额不足。当前账户欠款：{}。",
-                    guest.credit().abs()
-                ));
+        // 记录用户消息，并与当前会话记录关联
+        let content_type = self.clerk.get_content_type_by_name("text");
+        if let Err(e) = content_type {
+            let err_msg = format!("获取消息内容类型失败：{}, {e}", guest.name);
+            tracing::error!(err_msg);
+            let content = Text::new(err_msg);
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("发送消息内容类型错误消息时出错: {}", e);
+            }
+            return;
+        }
+        let content_type_text = content_type.as_ref().unwrap();
+        if let Err(e) = self.clerk.create_message(
+            &conversation,
+            &OaiMsgRole::User.into(),
+            &received_msg.content,
+            content_type_text,
+            0.0,
+        ) {
+            let err_msg = format!("新增消息记录失败：{}, {e}", guest.name);
+            tracing::error!(err_msg);
+            let content = Text::new(err_msg);
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("发送新增消息错误消息时出错: {}", e);
+            }
+            return;
+        }
+
+        // 获取AI可以处理的会话记录
+        let raw_msgs: Vec<DBMessage>;
+        match self.clerk.get_messages_by_conversation(&conversation) {
+            Err(e) => {
+                let err_msg = format!("获取会话记录失败：{}, {e}", guest.name);
+                tracing::error!(err_msg);
+                let content = Text::new(err_msg);
                 if let Err(e) = self.reply(&received_msg, content).await {
-                    tracing::error!("发送欠费通知失败：{e}");
+                    tracing::error!("发送获取消息错误消息时出错: {}", e);
                 }
                 return;
             }
+            Ok(r) => raw_msgs = r,
         }
+        let db_msgs: Vec<&DBMessage> = raw_msgs.iter().collect();
 
-        // 账户OK，更新用户消息内容
-        {
-            let mut guest_list = self.guest_list.write().await;
-            let guest = guest_list
-                .get_mut(&received_msg.from_user_name)
-                .expect("User should exist");
-            guest.append_message(
-                Message::new(&received_msg.content, &None, 0.0, MessageRole::User)
-                    .expect("Create new message should not fail"),
-            );
-            tracing::debug!(
-                "User {} updated with user message",
-                received_msg.from_user_name
-            );
-        }
-
-        // 获取AI回复
-        let response: Result<ChatResponse, Box<dyn std::error::Error + Send + Sync>>;
-        {
-            let guest_list = self.guest_list.read().await;
-            let guest = guest_list
-                .get(&received_msg.from_user_name)
-                .expect("User should exist");
-
-            // 获取AI可以处理的会话记录
-            let conversation = guest.get_conversation();
-
-            // 交由AI处理
-            response = self.ai_agent.chat(&conversation.into()).await;
-            tracing::debug!("User {} AI message got", received_msg.from_user_name);
-        }
+        // 交由AI处理
+        let response = self.ai_agent.chat(&db_msgs.into()).await;
 
         // AI接口成功？
         if let Err(e) = &response {
             tracing::error!("获取AI消息失败: {}", e);
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
             let content = Text::new(format!(
-                "发生内部错误。请等一分钟再试，或者向管理员寻求帮助。"
+                "获取AI回复时发生错误。请等一分钟再试，或者向管理员寻求帮助。"
             ));
             if let Err(e) = self.reply(&received_msg, content).await {
-                tracing::error!("发送错误通知失败：{e}");
+                tracing::error!("发送AI错误通知失败：{e}");
             }
             return;
         }
@@ -212,42 +276,55 @@ impl Agent {
             tracing::warn!("AI消息为空");
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
             let content = Text::new(format!(
-                "发生内部错误。请等一分钟再试，或者向管理员寻求帮助。"
+                "AI没有返回有效消息。请等一分钟再试，或者向管理员寻求帮助。"
             ));
             if let Err(e) = self.reply(&received_msg, content).await {
-                tracing::error!("发送错误通知失败：{e}");
+                tracing::error!("发送AI错误通知失败：{e}");
             }
             return;
         }
 
         // 更新AI回复到会话记录
-        {
-            let mut guest_list = self.guest_list.write().await;
-            let guest = guest_list
-                .get_mut(&received_msg.from_user_name)
-                .expect("User should be existed");
-            guest.append_message(
-                Message::new(
-                    response.choices[0].message.content(),
-                    &None,
-                    response.charge(),
-                    MessageRole::Assistant,
-                )
-                .expect("Create new message should not fail"),
-            );
-            tracing::debug!("User {} AI message appended", received_msg.from_user_name);
+        let ai_reply: DBMessage;
+        match self.clerk.create_message(
+            &conversation,
+            &OaiMsgRole::Assistant.into(),
+            response.choices[0].message.content(),
+            content_type_text,
+            response.charge(),
+        ) {
+            Err(e) => {
+                let err_msg = format!("记录AI消息失败：{}, {e}", guest.name);
+                tracing::error!(err_msg);
+                let content = Text::new(err_msg);
+                if let Err(e) = self.reply(&received_msg, content).await {
+                    tracing::error!("发送记录AI消息错误时出错: {}", e);
+                }
+                return;
+            }
+            Ok(r) => ai_reply = r,
+        }
+        tracing::debug!("User {} AI message appended", received_msg.from_user_name);
+
+        // 扣除相应余额
+        if let Err(e) = self.clerk.update_user(&guest, response.charge(), false) {
+            let err_msg = format!("更新用户账户失败：{}, {e}", guest.name);
+            tracing::error!(err_msg);
+            let content = Text::new(err_msg);
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("发送账户更新错误消息时出错: {}", e);
+            }
+            return;
         }
 
         // 回复用户最终结果
-        let content = Text::new(response.choices[0].message.content().to_owned());
-        let result = self.reply(&received_msg, content).await;
-        match result {
-            Err(e) => tracing::error!("回复用户消息失败：{e}"),
-            Ok(_) => tracing::debug!("User {} replied", received_msg.from_user_name),
+        let content = Text::new(ai_reply.content);
+        if let Err(e) = self.reply(&received_msg, content).await {
+            tracing::error!("回复用户消息失败：{e}")
         }
     }
 
-    // 向用户回复一条消息
+    // 向用户回复一条消息。消息内容content需要满足WecomMessage。
     async fn reply<T>(
         &self,
         received_msg: &ReceivedMsg,
@@ -290,6 +367,47 @@ impl Agent {
             ))));
         }
         Ok(())
+    }
+
+    // 处理管理员消息
+    // 管理员消息模式："用户名 余额变更量 管理员设定 有效账户"
+    fn handle_admin_msg(
+        &self,
+        msg: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        // Get admin command
+        let args: Vec<&str> = msg.split(' ').collect();
+        if args.len() == 1 {
+            return Err(Box::new(Error::new(
+                "使用方式：`::用户名 余额变更量 设定管理员`。例如：::robin 3.14 false".to_string(),
+            )));
+        }
+        if args.len() != 3 {
+            return Err(Box::new(Error::new(format!(
+                "需要参数3个，实际收到{}个",
+                args.len()
+            ))));
+        }
+        let username = args[0];
+        let credit_var: f64 = args[1]
+            .parse()
+            .map_err(|e| Error::new(format!("用户余额设定出错：{}", e)))?;
+        let as_admin: bool = args[2]
+            .parse()
+            .map_err(|e| Error::new(format!("用户管理员属性设定出错：{}", e)))?;
+
+        // Handle the update
+        let user = self.clerk.get_user(username)?;
+        if user.is_none() {
+            return Err(Box::new(Error::new(format!("无法找到用户：{}", username))));
+        }
+        let updated_user = self
+            .clerk
+            .update_user(&user.unwrap(), -credit_var, as_admin)?;
+        Ok(format!(
+            "用户{}更新成功。当前余额：{}。管理员：{}",
+            username, updated_user.credit, updated_user.admin
+        ))
     }
 }
 

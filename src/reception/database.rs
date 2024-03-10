@@ -7,7 +7,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
-use models::{
+pub use models::{
     Assistant, ContentType, Conversation, Guest, Message, MessageType, NewConversation, NewGuest,
     NewMessage, Provider,
 };
@@ -105,7 +105,10 @@ impl DBAgent {
     }
 
     /// 注册新用户，并返回该用户。若用户已经存在，则直接返回用户。
-    pub fn register(&self, user_name: &str) -> Result<Guest, Box<dyn std::error::Error>> {
+    pub fn register(
+        &self,
+        user_name: &str,
+    ) -> Result<Guest, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::guests::dsl::*;
 
         // 该用户是否已经存在？
@@ -131,7 +134,10 @@ impl DBAgent {
     }
 
     /// 根据用户名获取用户。企业微信用户名具备唯一性。
-    pub fn get_user(&self, by_name: &str) -> Result<Option<Guest>, Box<dyn std::error::Error>> {
+    pub fn get_user(
+        &self,
+        by_name: &str,
+    ) -> Result<Option<Guest>, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::guests::dsl::*;
         let connection = &mut self.connections.get()?;
         Ok(guests
@@ -147,7 +153,7 @@ impl DBAgent {
         user: &Guest,
         cost: f64,
         as_admin: bool,
-    ) -> Result<Guest, Box<dyn std::error::Error>> {
+    ) -> Result<Guest, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::guests::dsl::*;
         let connection = &mut self.connections.get()?;
         let post_guest = diesel::update(guests.find(user.id))
@@ -162,7 +168,10 @@ impl DBAgent {
     }
 
     /// 删除用户
-    pub fn remove_user(&self, by_name: &str) -> Result<usize, Box<dyn std::error::Error>> {
+    pub fn remove_user(
+        &self,
+        by_name: &str,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::guests::dsl::*;
         let user = self.get_user(by_name)?;
         if user.is_none() {
@@ -178,14 +187,19 @@ impl DBAgent {
     }
 
     /// 获取AI供应商信息
-    pub fn get_ai_providers(&self) -> Result<Vec<Provider>, Box<dyn std::error::Error>> {
+    pub fn get_ai_providers(
+        &self,
+    ) -> Result<Vec<Provider>, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::providers::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(providers.load(conn)?)
     }
 
     /// 获取AI助手
-    pub fn get_assistant(&self, by_id: i32) -> Result<Assistant, Box<dyn std::error::Error>> {
+    pub fn get_assistant(
+        &self,
+        by_id: i32,
+    ) -> Result<Assistant, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::assistants::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(assistants.find(by_id).first(conn)?)
@@ -195,7 +209,7 @@ impl DBAgent {
     pub fn get_assistant_by_agent_id(
         &self,
         by_agent_id: i32,
-    ) -> Result<Assistant, Box<dyn std::error::Error>> {
+    ) -> Result<Assistant, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::assistants::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(assistants
@@ -204,18 +218,62 @@ impl DBAgent {
             .first(conn)?)
     }
 
-    /// 获取消息角色
-    pub fn get_msg_types(&self) -> Result<Vec<MessageType>, Box<dyn std::error::Error>> {
+    /// 获取全部消息角色
+    pub fn get_msg_types(
+        &self,
+    ) -> Result<Vec<MessageType>, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::msg_types::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(msg_types.load(conn)?)
     }
 
-    /// 获取消息内容类型
-    pub fn get_content_types(&self) -> Result<Vec<ContentType>, Box<dyn std::error::Error>> {
+    /// 获取消息角色 - 按照ID
+    pub fn get_msg_type(
+        &self,
+        by_id: i32,
+    ) -> Result<MessageType, Box<dyn std::error::Error + Send + Sync>> {
+        use self::schema::msg_types::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(msg_types.find(by_id).first(conn)?)
+    }
+
+    /// 获取消息角色 - 按照名字
+    pub fn get_msg_type_by_name(
+        &self,
+        by_name: &str,
+    ) -> Result<MessageType, Box<dyn std::error::Error + Send + Sync>> {
+        use self::schema::msg_types::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(msg_types.filter(name.eq(by_name)).first(conn)?)
+    }
+
+    /// 获取全部消息内容类型
+    pub fn get_content_types(
+        &self,
+    ) -> Result<Vec<ContentType>, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::content_types::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(content_types.load(conn)?)
+    }
+
+    /// 获取全部消息内容类型
+    pub fn get_content_type(
+        &self,
+        by_id: i32,
+    ) -> Result<ContentType, Box<dyn std::error::Error + Send + Sync>> {
+        use self::schema::content_types::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(content_types.find(by_id).first(conn)?)
+    }
+
+    /// 获取全部消息内容类型
+    pub fn get_content_type_by_name(
+        &self,
+        by_name: &str,
+    ) -> Result<ContentType, Box<dyn std::error::Error + Send + Sync>> {
+        use self::schema::content_types::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(content_types.filter(name.eq(by_name)).first(conn)?)
     }
 
     /// 创建会话记录
@@ -223,7 +281,7 @@ impl DBAgent {
         &self,
         for_user: &Guest,
         with_assistant: &Assistant,
-    ) -> Result<Conversation, Box<dyn std::error::Error>> {
+    ) -> Result<Conversation, Box<dyn std::error::Error + Send + Sync>> {
         use schema::conversations::dsl::*;
         let timestamp = Utc::now().naive_utc();
 
@@ -254,7 +312,10 @@ impl DBAgent {
     }
 
     /// 按照ID获取会话记录
-    pub fn get_conversation(&self, by_id: i32) -> Result<Conversation, Box<dyn std::error::Error>> {
+    pub fn get_conversation(
+        &self,
+        by_id: i32,
+    ) -> Result<Conversation, Box<dyn std::error::Error + Send + Sync>> {
         use schema::conversations::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(conversations.find(by_id).first(conn)?)
@@ -264,7 +325,7 @@ impl DBAgent {
     pub fn get_active_conversation(
         &self,
         by_user: &Guest,
-    ) -> Result<Conversation, Box<dyn std::error::Error>> {
+    ) -> Result<Conversation, Box<dyn std::error::Error + Send + Sync>> {
         use schema::conversations::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(Conversation::belonging_to(by_user)
@@ -275,7 +336,10 @@ impl DBAgent {
     /// 删除会话记录。返回本次删除会话记录的个数。
     /// 若要重新开始会话，请使用create_conversation激活新会话。旧会话数据会自动失活。
     /// 本操作会永久删除数据，谨慎操作！
-    pub fn remove_conversation(&self, by_id: i32) -> Result<usize, Box<dyn std::error::Error>> {
+    pub fn remove_conversation(
+        &self,
+        by_id: i32,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         use schema::conversations::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(diesel::delete(conversations.find(by_id)).execute(conn)?)
@@ -289,7 +353,7 @@ impl DBAgent {
         content: &str,
         content_type: &ContentType,
         credit_cost: f64,
-    ) -> Result<Message, Box<dyn std::error::Error>> {
+    ) -> Result<Message, Box<dyn std::error::Error + Send + Sync>> {
         use schema::messages;
         let conn = &mut self.connections.get()?;
         let timestamp = Utc::now().naive_utc();
@@ -311,8 +375,7 @@ impl DBAgent {
     pub fn get_messages_by_conversation(
         &self,
         conv: &Conversation,
-    ) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
-        use schema::messages::dsl::*;
+    ) -> Result<Vec<Message>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = &mut self.connections.get()?;
         let mut msgs: Vec<Message> = Message::belonging_to(conv)
             .select(Message::as_select())
@@ -323,7 +386,10 @@ impl DBAgent {
 
     /// 删除消息记录。返回本次删除的个数。
     /// 本操作会永久删除数据，谨慎操作！
-    pub fn remove_message(&self, by_id: i32) -> Result<usize, Box<dyn std::error::Error>> {
+    pub fn remove_message(
+        &self,
+        by_id: i32,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         use schema::messages::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(diesel::delete(messages.find(by_id)).execute(conn)?)
@@ -357,11 +423,12 @@ mod error {
 mod tests {
     use super::DBAgent;
     use super::Provider;
+
+    // 测试数据库初始化
     #[test]
     fn test_db_init() {
-        // 准备工作
-        std::env::set_var("ADMIN", "administrator");
         // 初始化
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Agent init can not fail");
         // 默认Assistant
         assert_eq!(
@@ -380,6 +447,7 @@ mod tests {
 
     #[test]
     fn test_user_register() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
 
         // Register new users
@@ -401,7 +469,8 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_user_register() {
+    fn test_user_duplicate_register() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
 
         // Register new users
@@ -416,7 +485,8 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_user_fetch() {
+    fn test_user_invalid_get() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         // Fetch an invalid user
         let registered_user = agent
@@ -427,6 +497,7 @@ mod tests {
 
     #[test]
     fn test_user_update() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let user = agent
             .register("yinguobing")
@@ -443,7 +514,8 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_user() {
+    fn test_user_remove() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let _ = agent
             .register("yinguobing")
@@ -461,6 +533,7 @@ mod tests {
     // 测试会话记录
     #[test]
     fn test_conversation() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
 
         let guest = agent
@@ -495,11 +568,16 @@ mod tests {
         );
         assert!(agent.get_conversation(1).is_err());
         assert!(agent.get_active_conversation(&guest).unwrap().active);
+
+        // Delete all conversations
+        agent.remove_conversation(2).unwrap();
+        assert!(agent.get_active_conversation(&guest).is_err());
     }
 
     // 测试消息记录
     #[test]
-    fn test_messages() {
+    fn test_message() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let guest = agent
             .register("yinguobing")
@@ -587,6 +665,7 @@ mod tests {
     // 测试助手的初始化结果
     #[test]
     fn test_assistant_init() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let assistant = agent.get_assistant_by_agent_id(1000002).unwrap();
         assert_eq!(assistant.id, 1);
@@ -595,7 +674,8 @@ mod tests {
 
     // 测试消息角色类型的初始化结果
     #[test]
-    fn test_msg_types_init() {
+    fn test_msg_type_init() {
+        std::env::set_var("ADMIN", "administrator");
         let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
         let msg_types = agent.get_msg_types().unwrap();
         assert_eq!(
@@ -615,5 +695,96 @@ mod tests {
             ],
             msg_types
         );
+    }
+
+    // 测试消息角色获取
+    #[test]
+    fn test_msg_type_get() {
+        std::env::set_var("ADMIN", "administrator");
+        let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
+        assert!(agent.get_msg_type(5).is_err());
+        assert_eq!(
+            agent.get_msg_type(1).unwrap(),
+            super::MessageType {
+                id: 1,
+                name: "system".to_string(),
+            }
+        );
+        assert!(agent.get_msg_type_by_name("NotExist").is_err());
+        assert_eq!(
+            agent.get_msg_type_by_name("assistant").unwrap(),
+            super::MessageType {
+                id: 3,
+                name: "assistant".to_string(),
+            }
+        )
+    }
+
+    // 测试内容类型的初始化结果
+    #[test]
+    fn test_content_type_init() {
+        std::env::set_var("ADMIN", "administrator");
+        let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
+        let content_types = agent.get_content_types().unwrap();
+        assert_eq!(
+            vec![
+                super::ContentType {
+                    id: 1,
+                    name: "text".to_string()
+                },
+                super::ContentType {
+                    id: 2,
+                    name: "image".to_string()
+                },
+                super::ContentType {
+                    id: 3,
+                    name: "voice".to_string()
+                },
+                super::ContentType {
+                    id: 4,
+                    name: "video".to_string()
+                },
+                super::ContentType {
+                    id: 5,
+                    name: "file".to_string()
+                },
+                super::ContentType {
+                    id: 6,
+                    name: "markdown".to_string()
+                },
+                super::ContentType {
+                    id: 7,
+                    name: "news".to_string()
+                },
+                super::ContentType {
+                    id: 8,
+                    name: "textcard".to_string()
+                },
+            ],
+            content_types
+        );
+    }
+
+    // 获取消息内容类型
+    #[test]
+    fn test_content_type_get() {
+        std::env::set_var("ADMIN", "administrator");
+        let agent = DBAgent::new(":memory:").expect("Database agent should be initialized");
+        assert_eq!(
+            agent.get_content_type(1).unwrap(),
+            super::ContentType {
+                id: 1,
+                name: "text".to_string()
+            }
+        );
+        assert!(agent.get_content_type(99).is_err());
+        assert_eq!(
+            agent.get_content_type_by_name("video").unwrap(),
+            super::ContentType {
+                id: 4,
+                name: "video".to_string()
+            }
+        );
+        assert!(agent.get_content_type_by_name("NotExist").is_err());
     }
 }
