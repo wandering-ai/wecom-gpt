@@ -255,21 +255,6 @@ impl Agent {
             return;
         }
 
-        // 是指令消息吗？指令消息不会计入会话记录。
-        let user_msg = received_msg.content.as_str();
-        if user_msg.starts_with("#") {
-            let reply_content = match user_msg {
-                "#查余额" => {
-                    format!("当前余额：{}", guest.credit)
-                }
-                &_ => "抱歉，暂不支持当前指令。".to_string(),
-            };
-            if let Err(e) = self.reply(received_msg, Text::new(reply_content)).await {
-                tracing::error!("发送用户指令反馈消息失败：{e}");
-            }
-            return;
-        }
-
         // 获取当前Assistant
         let agent_id = received_msg.agent_id.parse::<i32>();
         if let Err(e) = agent_id {
@@ -316,6 +301,35 @@ impl Agent {
             }
             Ok(c) => conversation = c,
         };
+
+        // 是指令消息吗？指令消息不会计入会话记录。
+        let user_msg = received_msg.content.as_str();
+        if user_msg.starts_with("#") {
+            let reply_content: String;
+            match user_msg {
+                "#查余额" => reply_content = format!("当前余额：{}", guest.credit),
+                "#查token" => match self.clerk.get_messages_by_conversation(&conversation) {
+                    Err(e) => {
+                        reply_content = format!("获取会话记录失败：{}, {e}", guest.name);
+                        tracing::error!(reply_content);
+                    }
+                    Ok(msgs) => {
+                        let mut in_tokens = 0;
+                        let mut out_tokens = 0;
+                        msgs.iter().for_each(|m| {
+                            in_tokens += m.prompt_tokens;
+                            out_tokens += m.completion_tokens
+                        });
+                        reply_content = format!("当前会话累计消耗prompt token {in_tokens}个，completion token {out_tokens}个。");
+                    }
+                },
+                &_ => reply_content = "抱歉，暂不支持当前指令。".to_string(),
+            };
+            if let Err(e) = self.reply(received_msg, Text::new(reply_content)).await {
+                tracing::error!("发送用户指令反馈消息失败：{e}");
+            }
+            return;
+        }
 
         // 记录用户消息，并与当前会话记录关联
         let content_type = self.clerk.get_content_type_by_name("text");
