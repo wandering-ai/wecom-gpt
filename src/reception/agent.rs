@@ -115,7 +115,7 @@ impl Agent {
         }
         let received_msg: ReceivedMsg = xml_doc.expect("XML document should be valid.");
 
-        // 谁发送的消息？
+        // 谁发送的消息？若用户不存在，则自动创建该用户。
         let guest_name = &received_msg.from_user_name;
         let guest: Guest;
         match self.clerk.get_user(guest_name) {
@@ -213,7 +213,7 @@ impl Agent {
         let args: Vec<&str> = msg.split(' ').collect();
         if args.len() == 1 {
             return Err(Box::new(Error::new(
-                "使用方式：`::用户名 余额变更量 设定管理员`。例如：::robin 3.14 false".to_string(),
+                "使用方式：`#用户名 余额变更量 设定管理员`。例如：#robin 3.14 false".to_string(),
             )));
         }
         if args.len() != 3 {
