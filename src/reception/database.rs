@@ -353,6 +353,8 @@ impl DBAgent {
         content: &str,
         content_type: &ContentType,
         credit_cost: f64,
+        prompt_tokens: i32,
+        completion_tokens: i32,
     ) -> Result<Message, Box<dyn std::error::Error + Send + Sync>> {
         use schema::messages;
         let conn = &mut self.connections.get()?;
@@ -364,6 +366,8 @@ impl DBAgent {
             cost: credit_cost,
             message_type: msg_role.id,
             content_type: content_type.id,
+            prompt_tokens,
+            completion_tokens,
         };
         Ok(diesel::insert_into(messages::table)
             .values(&new_msg)
@@ -606,7 +610,15 @@ mod tests {
             .find(|x| x.name == "system")
             .expect("`system` should exist as built in type");
         let sys_msg = agent
-            .create_message(&conversation, msg_role, system_content, content_type, 0.0)
+            .create_message(
+                &conversation,
+                msg_role,
+                system_content,
+                content_type,
+                0.0,
+                12,
+                0,
+            )
             .expect("System message should be created");
 
         let user_content = "你是谁？";
@@ -619,7 +631,15 @@ mod tests {
             .find(|x| x.name == "user")
             .expect("`user` should exist as built in type");
         let user_msg = agent
-            .create_message(&conversation, msg_role, user_content, content_type, 0.06)
+            .create_message(
+                &conversation,
+                msg_role,
+                user_content,
+                content_type,
+                0.06,
+                0,
+                0,
+            )
             .expect("User message should be created");
 
         let assistant_content = "我是小白，你的智能助手。";
@@ -638,12 +658,15 @@ mod tests {
                 assistant_content,
                 content_type,
                 3.14,
+                12,
+                8,
             )
             .expect("Assistant message should be created");
 
         assert_eq!(sys_msg.conversation_id, conversation.id);
         assert_eq!(user_msg.cost, 0.06);
         assert_eq!(assistant_msg.id, 3);
+        assert_eq!(assistant_msg.completion_tokens, 8);
 
         // Remove
         assert_eq!(agent.remove_message(3).unwrap(), 1);
@@ -656,7 +679,7 @@ mod tests {
             .find(|x| x.name == "user")
             .expect("`user` should exist as built in type");
         let msg_2 = agent
-            .create_message(&conv_2, msg_role, "hello, robin", content_type, 1.2)
+            .create_message(&conv_2, msg_role, "hello, robin", content_type, 1.2, 0, 0)
             .unwrap();
 
         assert_eq!(msg_2.id, 4);

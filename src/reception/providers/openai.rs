@@ -220,13 +220,25 @@ pub struct ChatResponse {
     #[allow(dead_code)]
     model: String,
     usage: ApiUsage,
-    pub choices: Vec<ChatResult>,
+    choices: Vec<ChatResult>,
 }
 
 impl ChatResponse {
+    pub fn choices(&self) -> &Vec<ChatResult> {
+        &self.choices
+    }
+
     pub fn charge(&self) -> f64 {
         (self.usage.prompt_tokens as f64 * 0.06 + self.usage.completion_tokens as f64 * 0.12)
             / 1000.0
+    }
+
+    pub fn prompt_tokens(&self) -> usize {
+        self.usage.prompt_tokens
+    }
+
+    pub fn completion_tokens(&self) -> usize {
+        self.usage.completion_tokens
     }
 }
 
@@ -240,9 +252,15 @@ struct ApiUsage {
 
 #[derive(Deserialize)]
 pub struct ChatResult {
-    pub message: Message,
+    message: Message,
     #[allow(dead_code)]
     finish_reason: String,
     #[allow(dead_code)]
     index: usize,
+}
+
+impl ChatResult {
+    pub fn message(&self) -> &Message {
+        &self.message
+    }
 }

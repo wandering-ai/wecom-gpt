@@ -335,6 +335,8 @@ impl Agent {
             &received_msg.content,
             content_type_text,
             0.0,
+            0,
+            0,
         ) {
             let err_msg = format!("新增消息记录失败：{}, {e}", guest.name);
             tracing::error!(err_msg);
@@ -379,7 +381,7 @@ impl Agent {
         let response = response.expect("AI message should be valid");
 
         // AI返回了有效内容？
-        if response.choices.is_empty() {
+        if response.choices().is_empty() {
             tracing::warn!("AI消息为空");
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
             let content = Text::new(format!(
@@ -396,9 +398,11 @@ impl Agent {
         match self.clerk.create_message(
             &conversation,
             &OaiMsgRole::Assistant.into(),
-            response.choices[0].message.content(),
+            response.choices()[0].message().content(),
             content_type_text,
             response.charge(),
+            response.prompt_tokens() as i32,
+            response.completion_tokens() as i32,
         ) {
             Err(e) => {
                 let err_msg = format!("记录AI消息失败：{}, {e}", guest.name);

@@ -101,7 +101,10 @@ pub struct Message {
     pub cost: f64,
     pub message_type: i32,
     pub content_type: i32,
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
 }
+
 // 用于插入表的新消息
 #[derive(Insertable)]
 #[diesel(table_name = schema::messages)]
@@ -113,4 +116,6 @@ pub struct NewMessage {
     pub cost: f64,
     pub message_type: i32,
     pub content_type: i32,
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
 }
