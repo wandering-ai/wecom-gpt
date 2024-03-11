@@ -151,14 +151,14 @@ impl DBAgent {
     pub fn update_user(
         &self,
         user: &Guest,
-        cost: f64,
+        credit_var: f64,
         as_admin: bool,
     ) -> Result<Guest, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::guests::dsl::*;
         let connection = &mut self.connections.get()?;
         let post_guest = diesel::update(guests.find(user.id))
             .set((
-                credit.eq(credit + cost),
+                credit.eq(credit + credit_var),
                 updated_at.eq(Utc::now().naive_utc()),
                 admin.eq(as_admin),
             ))

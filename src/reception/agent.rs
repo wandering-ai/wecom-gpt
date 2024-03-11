@@ -391,10 +391,10 @@ impl Agent {
         let username = args[0];
         let credit_var: f64 = args[1]
             .parse()
-            .map_err(|e| Error::new(format!("用户余额设定出错：{}", e)))?;
+            .map_err(|e| Error::new(format!("用户余额解析出错：{}", e)))?;
         let as_admin: bool = args[2]
             .parse()
-            .map_err(|e| Error::new(format!("用户管理员属性设定出错：{}", e)))?;
+            .map_err(|e| Error::new(format!("用户管理员属性解析出错：{}", e)))?;
 
         // Handle the update
         let user = self.clerk.get_user(username)?;
@@ -403,7 +403,7 @@ impl Agent {
         }
         let updated_user = self
             .clerk
-            .update_user(&user.unwrap(), -credit_var, as_admin)?;
+            .update_user(&user.unwrap(), credit_var, as_admin)?;
         Ok(format!(
             "用户{}更新成功。当前余额：{}。管理员：{}",
             username, updated_user.credit, updated_user.admin
