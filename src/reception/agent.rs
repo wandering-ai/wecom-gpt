@@ -136,12 +136,12 @@ impl Agent {
             Ok(Some(g)) => guest = g,
         };
 
-        // 是管理员消息吗？
-        // 管理员消息由管理员账户(Guest::admin=true)发送，并且内容匹配管理员指令规则。
+        // 是管理员指令吗？
+        // 管理员消息由管理员账户(Guest::admin=true)发送，并且内容匹配管理员指令规则(#指令内容)。
         // 此过程出现的任何错误，均需要告知管理员。
-        if guest.admin == true && received_msg.content.trim().starts_with("::") {
+        if guest.admin == true && received_msg.content.trim().starts_with("#") {
             let sys_reply =
-                match self.handle_admin_msg(received_msg.content.trim().trim_start_matches(':')) {
+                match self.handle_admin_msg(received_msg.content.trim().trim_start_matches('#')) {
                     Ok(msg) => msg,
                     Err(e) => format!("处理管理员消息时出错：{}", e),
                 };
@@ -152,6 +152,98 @@ impl Agent {
             return;
         }
 
+        // 处理常规用户消息
+        self.handle_guest_msg(&guest, &received_msg).await;
+    }
+
+    // 向用户回复一条消息。消息内容content需要满足WecomMessage。
+    async fn reply<T>(
+        &self,
+        received_msg: &ReceivedMsg,
+        content: T,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        T: Serialize + WecomMessage,
+    {
+        let msg = WecomMsgBuilder::default()
+            .to_users(vec![&received_msg.from_user_name])
+            .from_agent(
+                received_msg
+                    .agent_id
+                    .parse::<usize>()
+                    .expect("Agent ID should be usize"),
+            )
+            .build(content)
+            .expect("Massage should be built");
+
+        // 发送该消息
+        tracing::debug!("Sending message to {} ...", received_msg.from_user_name);
+        let response = self.wecom_agent.send(msg).await;
+        if let Err(e) = response {
+            tracing::debug!("Error sending msg: {e}");
+            return Err(Box::new(Error::new(format!("Error sending msg: {e}"))));
+        }
+        let response = response.expect("Response should be valid.");
+
+        // 发送成功，但是服务器返回错误。
+        if response.is_error() {
+            tracing::debug!(
+                "Wecom API error: {} {}",
+                response.error_code(),
+                response.error_msg()
+            );
+            return Err(Box::new(Error::new(format!(
+                "Error sending msg: {}, {}",
+                response.error_code(),
+                response.error_msg()
+            ))));
+        }
+        Ok(())
+    }
+
+    // 处理管理员消息
+    // 管理员消息模式："用户名 余额变更量 管理员设定 有效账户"
+    fn handle_admin_msg(
+        &self,
+        msg: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        // Get admin command
+        let args: Vec<&str> = msg.split(' ').collect();
+        if args.len() == 1 {
+            return Err(Box::new(Error::new(
+                "使用方式：`::用户名 余额变更量 设定管理员`。例如：::robin 3.14 false".to_string(),
+            )));
+        }
+        if args.len() != 3 {
+            return Err(Box::new(Error::new(format!(
+                "需要参数3个，实际收到{}个",
+                args.len()
+            ))));
+        }
+        let username = args[0];
+        let credit_var: f64 = args[1]
+            .parse()
+            .map_err(|e| Error::new(format!("用户余额解析出错：{}", e)))?;
+        let as_admin: bool = args[2]
+            .parse()
+            .map_err(|e| Error::new(format!("用户管理员属性解析出错：{}", e)))?;
+
+        // Handle the update
+        let user = self.clerk.get_user(username)?;
+        if user.is_none() {
+            return Err(Box::new(Error::new(format!("无法找到用户：{}", username))));
+        }
+        let updated_user = self
+            .clerk
+            .update_user(&user.unwrap(), credit_var, as_admin)?;
+        Ok(format!(
+            "用户{}更新成功。当前余额：{}。管理员：{}",
+            username, updated_user.credit, updated_user.admin
+        ))
+    }
+
+    // 处理常规用户消息
+    async fn handle_guest_msg(&self, guest: &Guest, received_msg: &ReceivedMsg) {
         // 用户账户有效？
         if guest.credit < 0.0 {
             tracing::warn!("余额不足。账户{}欠款：{}。", guest.name, guest.credit.abs());
@@ -159,6 +251,21 @@ impl Agent {
             let content = Text::new(format!("余额不足。当前账户欠款：{}。", guest.credit.abs()));
             if let Err(e) = self.reply(&received_msg, content).await {
                 tracing::error!("发送欠费通知失败：{e}");
+            }
+            return;
+        }
+
+        // 是指令消息吗？指令消息不会计入会话记录。
+        let user_msg = received_msg.content.as_str();
+        if user_msg.starts_with("#") {
+            let reply_content = match user_msg {
+                "#查余额" => {
+                    format!("当前余额：{}", guest.credit)
+                }
+                &_ => "抱歉，暂不支持当前指令。".to_string(),
+            };
+            if let Err(e) = self.reply(received_msg, Text::new(reply_content)).await {
+                tracing::error!("发送用户指令反馈消息失败：{e}");
             }
             return;
         }
@@ -322,92 +429,6 @@ impl Agent {
         if let Err(e) = self.reply(&received_msg, content).await {
             tracing::error!("回复用户消息失败：{e}")
         }
-    }
-
-    // 向用户回复一条消息。消息内容content需要满足WecomMessage。
-    async fn reply<T>(
-        &self,
-        received_msg: &ReceivedMsg,
-        content: T,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    where
-        T: Serialize + WecomMessage,
-    {
-        let msg = WecomMsgBuilder::default()
-            .to_users(vec![&received_msg.from_user_name])
-            .from_agent(
-                received_msg
-                    .agent_id
-                    .parse::<usize>()
-                    .expect("Agent ID should be usize"),
-            )
-            .build(content)
-            .expect("Massage should be built");
-
-        // 发送该消息
-        tracing::debug!("Sending message to {} ...", received_msg.from_user_name);
-        let response = self.wecom_agent.send(msg).await;
-        if let Err(e) = response {
-            tracing::debug!("Error sending msg: {e}");
-            return Err(Box::new(Error::new(format!("Error sending msg: {e}"))));
-        }
-        let response = response.expect("Response should be valid.");
-
-        // 发送成功，但是服务器返回错误。
-        if response.is_error() {
-            tracing::debug!(
-                "Wecom API error: {} {}",
-                response.error_code(),
-                response.error_msg()
-            );
-            return Err(Box::new(Error::new(format!(
-                "Error sending msg: {}, {}",
-                response.error_code(),
-                response.error_msg()
-            ))));
-        }
-        Ok(())
-    }
-
-    // 处理管理员消息
-    // 管理员消息模式："用户名 余额变更量 管理员设定 有效账户"
-    fn handle_admin_msg(
-        &self,
-        msg: &str,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        // Get admin command
-        let args: Vec<&str> = msg.split(' ').collect();
-        if args.len() == 1 {
-            return Err(Box::new(Error::new(
-                "使用方式：`::用户名 余额变更量 设定管理员`。例如：::robin 3.14 false".to_string(),
-            )));
-        }
-        if args.len() != 3 {
-            return Err(Box::new(Error::new(format!(
-                "需要参数3个，实际收到{}个",
-                args.len()
-            ))));
-        }
-        let username = args[0];
-        let credit_var: f64 = args[1]
-            .parse()
-            .map_err(|e| Error::new(format!("用户余额解析出错：{}", e)))?;
-        let as_admin: bool = args[2]
-            .parse()
-            .map_err(|e| Error::new(format!("用户管理员属性解析出错：{}", e)))?;
-
-        // Handle the update
-        let user = self.clerk.get_user(username)?;
-        if user.is_none() {
-            return Err(Box::new(Error::new(format!("无法找到用户：{}", username))));
-        }
-        let updated_user = self
-            .clerk
-            .update_user(&user.unwrap(), credit_var, as_admin)?;
-        Ok(format!(
-            "用户{}更新成功。当前余额：{}。管理员：{}",
-            username, updated_user.credit, updated_user.admin
-        ))
     }
 }
 
