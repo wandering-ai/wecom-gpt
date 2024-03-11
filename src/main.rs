@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use wecom_gpt::app;
 
 #[derive(Deserialize, Debug)]
@@ -18,7 +18,11 @@ async fn main() {
     // Setup tracing
     tracing_subscriber::fmt()
         .compact()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
         .init();
 
     // Read in configuration from OS env.
