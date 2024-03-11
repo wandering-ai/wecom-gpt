@@ -63,6 +63,7 @@ diesel::table! {
     providers (id) {
         id -> Integer,
         name -> Text,
+        max_tokens -> Integer,
     }
 }
 

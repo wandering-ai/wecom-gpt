@@ -20,7 +20,9 @@ use wecom_agent::{
 use super::providers::openai::{MessageRole as OaiMsgRole, OpenAiAgent};
 
 /// 数据库模块
-use super::database::{Conversation as DBConversation, DBAgent, Guest, Message as DBMessage};
+use super::database::{
+    Assistant, Conversation as DBConversation, DBAgent, Guest, Message as DBMessage,
+};
 
 /// Agent负责协调用户与AI之间的交互过程
 pub struct Agent {
@@ -266,15 +268,18 @@ impl Agent {
             }
             return;
         }
-        let assistant = self.clerk.get_assistant_by_agent_id(agent_id.unwrap());
-        if let Err(e) = assistant {
-            let err_msg = format!("获取Assistant失败：{e}");
-            tracing::error!(err_msg);
-            let content = Text::new(err_msg);
-            if let Err(e) = self.reply(&received_msg, content).await {
-                tracing::error!("发送Assistant错误消息时出错: {}", e);
+        let assistant: Assistant;
+        match self.clerk.get_assistant_by_agent_id(agent_id.unwrap()) {
+            Err(e) => {
+                let err_msg = format!("获取Assistant失败：{e}");
+                tracing::error!(err_msg);
+                let content = Text::new(err_msg);
+                if let Err(e) = self.reply(&received_msg, content).await {
+                    tracing::error!("发送Assistant错误消息时出错: {}", e);
+                }
+                return;
             }
-            return;
+            Ok(a) => assistant = a,
         }
 
         // 账户OK，获取用户会话记录。若会话记录不存在，则创建新记录。
@@ -286,7 +291,7 @@ impl Agent {
                     guest.name,
                     e
                 );
-                match self.clerk.create_conversation(&guest, &assistant.unwrap()) {
+                match self.clerk.create_conversation(&guest, &assistant) {
                     Err(e) => {
                         let err_msg = format!("创建用户{}会话记录失败：{}。", guest.name, e);
                         tracing::error!(err_msg);
@@ -361,7 +366,7 @@ impl Agent {
             return;
         }
 
-        // 获取AI可以处理的会话记录
+        // 获取AI可以处理的会话记录。
         let raw_msgs: Vec<DBMessage>;
         match self.clerk.get_messages_by_conversation(&conversation) {
             Err(e) => {
@@ -375,7 +380,26 @@ impl Agent {
             }
             Ok(r) => raw_msgs = r,
         }
-        let db_msgs: Vec<&DBMessage> = raw_msgs.iter().collect();
+
+        // 若会话超长，丢弃最早内容。
+        let provider = self.clerk.get_provider(assistant.provider_id);
+        if let Err(e) = provider {
+            let err_msg = format!("获取Provider记录失败：{}, {e}", guest.name);
+            tracing::error!(err_msg);
+            let content = Text::new(err_msg);
+            if let Err(e) = self.reply(&received_msg, content).await {
+                tracing::error!("发送获取Provider错误消息时出错: {}", e);
+            }
+            return;
+        }
+        let max_tokens = provider.unwrap().max_tokens;
+        let mut db_msgs: Vec<&DBMessage> = raw_msgs.iter().collect();
+        while db_msgs.last().is_some_and(|m| {
+            m.prompt_tokens + m.completion_tokens > (0.9 * max_tokens as f64) as i32
+        }) && db_msgs.len() > 1
+        {
+            db_msgs.remove(1);
+        }
 
         // 交由AI处理
         let response = self.ai_agent.chat(&db_msgs.into()).await;

@@ -32,6 +32,7 @@ pub struct NewGuest<'a> {
 pub struct Provider {
     pub id: i32,
     pub name: String,
+    pub max_tokens: i32,
 }
 
 // 消息角色

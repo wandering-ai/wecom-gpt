@@ -10,7 +10,8 @@ CREATE TABLE guests (
 -- 初始化AI供应商表
 CREATE TABLE providers (
     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR NOT NULL
+    name VARCHAR NOT NULL,
+    max_tokens INTEGER NOT NULL
 );
 -- 初始化企业微信应用表
 CREATE TABLE assistants (

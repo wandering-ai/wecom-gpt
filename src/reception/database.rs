@@ -54,9 +54,13 @@ impl DBAgent {
 
         // 填充AI供应商
         {
+            use schema::providers;
             let conn = &mut connections.get()?;
-            let current_providers = vec![schema::providers::name.eq("openai/gpt4-32k")];
-            diesel::insert_into(schema::providers::table)
+            let current_providers = vec![(
+                providers::name.eq("openai/gpt4-32k"),
+                providers::max_tokens.eq(32 * 1000),
+            )];
+            diesel::insert_into(providers::table)
                 .values(&current_providers)
                 .execute(conn)?;
         }
@@ -187,12 +191,20 @@ impl DBAgent {
     }
 
     /// 获取AI供应商信息
-    pub fn get_ai_providers(
-        &self,
-    ) -> Result<Vec<Provider>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_providers(&self) -> Result<Vec<Provider>, Box<dyn std::error::Error + Send + Sync>> {
         use self::schema::providers::dsl::*;
         let conn = &mut self.connections.get()?;
         Ok(providers.load(conn)?)
+    }
+
+    /// 获取AI供应商信息 - 通过ID
+    pub fn get_provider(
+        &self,
+        by_id: i32,
+    ) -> Result<Provider, Box<dyn std::error::Error + Send + Sync>> {
+        use self::schema::providers::dsl::*;
+        let conn = &mut self.connections.get()?;
+        Ok(providers.find(by_id).first(conn)?)
     }
 
     /// 获取AI助手
@@ -436,10 +448,11 @@ mod tests {
         let agent = DBAgent::new(":memory:").expect("Agent init can not fail");
         // 默认Assistant
         assert_eq!(
-            agent.get_ai_providers().unwrap(),
+            agent.get_providers().unwrap(),
             vec![Provider {
                 id: 1,
-                name: "openai/gpt4-32k".to_string()
+                name: "openai/gpt4-32k".to_string(),
+                max_tokens: 32 * 1000_i32,
             }]
         );
         // 默认ADMIN
