@@ -301,7 +301,10 @@ impl Agent {
                         }
                         return;
                     }
-                    Ok(c) => conversation = c,
+                    Ok(c) => {
+                        tracing::info!("已为用户{}创建会话记录。", guest.name);
+                        conversation = c
+                    }
                 }
             }
             Ok(c) => conversation = c,
@@ -463,8 +466,11 @@ impl Agent {
         }
         tracing::debug!("User {} AI message appended", received_msg.from_user_name);
 
-        // 扣除相应余额
-        if let Err(e) = self.clerk.update_user(guest, -response.charge(), false) {
+        // 扣除相应余额。注意此操作不应当影响用户权限角色。
+        if let Err(e) = self
+            .clerk
+            .update_user(guest, -response.charge(), guest.admin)
+        {
             let err_msg = format!("更新用户账户失败：{}, {e}", guest.name);
             tracing::error!(err_msg);
             let content = Text::new(err_msg);
