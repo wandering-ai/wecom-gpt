@@ -141,9 +141,9 @@ impl Agent {
         // 是管理员指令吗？
         // 管理员消息由管理员账户(Guest::admin=true)发送，并且内容匹配管理员指令规则(#指令内容)。
         // 此过程出现的任何错误，均需要告知管理员。
-        if guest.admin == true && received_msg.content.trim().starts_with("#") {
+        if guest.admin == true && received_msg.content.trim().starts_with("$$") {
             let sys_reply =
-                match self.handle_admin_msg(received_msg.content.trim().trim_start_matches('#')) {
+                match self.handle_admin_msg(received_msg.content.trim().trim_start_matches('$')) {
                     Ok(msg) => msg,
                     Err(e) => format!("处理管理员消息时出错：{}", e),
                 };
@@ -213,7 +213,7 @@ impl Agent {
         let args: Vec<&str> = msg.split(' ').collect();
         if args.len() == 1 {
             return Err(Box::new(Error::new(
-                "使用方式：`#用户名 余额变更量 设定管理员`。例如：#robin 3.14 false".to_string(),
+                "使用方式：`$$用户名 余额变更量 设定管理员`。例如：#robin 3.14 false".to_string(),
             )));
         }
         if args.len() != 3 {
