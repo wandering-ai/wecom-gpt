@@ -18,6 +18,10 @@ export APP_ADMIN="YourAdminName"
 export AZURE_OPENAI_API_KEY="YourAzureOpenApiKey"
 # Azure OpenAI请求终结点
 export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/openai/deployments/gpt-4-32k/chat/completions?api-version=2023-03-15-preview"
+# 所使用SQLite数据库的地址
+export DATABASE_URL=sqlite.db
+# 默认管理员的企业微信账户名
+export APP_ADMIN=YourAdminAccount
 ```
 
 然后执行
