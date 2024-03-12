@@ -328,6 +328,15 @@ impl Agent {
                         reply_content = format!("当前会话累计消耗prompt token {in_tokens}个，completion token {out_tokens}个。");
                     }
                 },
+                "#新会话" => match self.clerk.create_conversation(&guest, &assistant) {
+                    Err(e) => {
+                        reply_content = format!("新建会话记录失败：{}, {e}", guest.name);
+                        tracing::error!(reply_content);
+                    }
+                    Ok(conv) => {
+                        reply_content = format!("新会话（{}）创建成功。您可以开始对话了。", conv.id)
+                    }
+                },
                 &_ => reply_content = "抱歉，暂不支持当前指令。".to_string(),
             };
             if let Err(e) = self.reply(received_msg, Text::new(reply_content)).await {
