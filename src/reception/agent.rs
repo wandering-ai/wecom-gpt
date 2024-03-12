@@ -456,7 +456,7 @@ impl Agent {
         tracing::debug!("User {} AI message appended", received_msg.from_user_name);
 
         // 扣除相应余额
-        if let Err(e) = self.clerk.update_user(&guest, response.charge(), false) {
+        if let Err(e) = self.clerk.update_user(&guest, -response.charge(), false) {
             let err_msg = format!("更新用户账户失败：{}, {e}", guest.name);
             tracing::error!(err_msg);
             let content = Text::new(err_msg);
