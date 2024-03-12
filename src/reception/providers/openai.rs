@@ -92,7 +92,7 @@ impl From<Vec<&database::Message>> for Conversation {
         messages.push(Message::new(MessageRole::System, sys_msg.to_owned()));
 
         // 追加剩余消息
-        while let Some(msg) = msg_iter.next() {
+        for msg in msg_iter {
             messages.push(Message::from(*msg));
         }
 
@@ -150,9 +150,9 @@ pub enum MessageRole {
 }
 
 // 消息角色转换为数据库角色
-impl Into<database::MessageType> for MessageRole {
-    fn into(self) -> database::MessageType {
-        match self {
+impl From<MessageRole> for database::MessageType {
+    fn from(val: MessageRole) -> Self {
+        match val {
             MessageRole::System => database::MessageType {
                 id: 1,
                 name: "system".to_string(),

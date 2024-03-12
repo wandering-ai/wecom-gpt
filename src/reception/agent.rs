@@ -141,7 +141,7 @@ impl Agent {
         // 是管理员指令吗？
         // 管理员消息由管理员账户(Guest::admin=true)发送，并且内容匹配管理员指令规则(#指令内容)。
         // 此过程出现的任何错误，均需要告知管理员。
-        if guest.admin == true && received_msg.content.trim().starts_with("$$") {
+        if guest.admin && received_msg.content.trim().starts_with("$$") {
             let sys_reply =
                 match self.handle_admin_msg(received_msg.content.trim().trim_start_matches('$')) {
                     Ok(msg) => msg,
@@ -251,7 +251,7 @@ impl Agent {
             tracing::warn!("余额不足。账户{}欠款：{}。", guest.name, guest.credit.abs());
             // 告知用户欠款详情
             let content = Text::new(format!("余额不足。当前账户欠款：{}。", guest.credit.abs()));
-            if let Err(e) = self.reply(&received_msg, content).await {
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送欠费通知失败：{e}");
             }
             return;
@@ -263,7 +263,7 @@ impl Agent {
             let err_msg = format!("转换AgentID失败：{e}");
             tracing::error!(err_msg);
             let content = Text::new(err_msg);
-            if let Err(e) = self.reply(&received_msg, content).await {
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送Assistant错误消息时出错: {}", e);
             }
             return;
@@ -274,7 +274,7 @@ impl Agent {
                 let err_msg = format!("获取Assistant失败：{e}");
                 tracing::error!(err_msg);
                 let content = Text::new(err_msg);
-                if let Err(e) = self.reply(&received_msg, content).await {
+                if let Err(e) = self.reply(received_msg, content).await {
                     tracing::error!("发送Assistant错误消息时出错: {}", e);
                 }
                 return;
@@ -284,19 +284,19 @@ impl Agent {
 
         // 账户OK，获取用户会话记录。若会话记录不存在，则创建新记录。
         let conversation: DBConversation;
-        match self.clerk.get_active_conversation(&guest) {
+        match self.clerk.get_active_conversation(guest) {
             Err(e) => {
                 tracing::warn!(
                     "获取用户{}会话记录失败：{}。将为此用户创建新记录。",
                     guest.name,
                     e
                 );
-                match self.clerk.create_conversation(&guest, &assistant) {
+                match self.clerk.create_conversation(guest, &assistant) {
                     Err(e) => {
                         let err_msg = format!("创建用户{}会话记录失败：{}。", guest.name, e);
                         tracing::error!(err_msg);
                         let content = Text::new(err_msg);
-                        if let Err(e) = self.reply(&received_msg, content).await {
+                        if let Err(e) = self.reply(received_msg, content).await {
                             tracing::error!("发送会话错误消息时出错: {}", e);
                         }
                         return;
@@ -309,7 +309,7 @@ impl Agent {
 
         // 是指令消息吗？指令消息不会计入会话记录。
         let user_msg = received_msg.content.as_str();
-        if user_msg.starts_with("#") {
+        if user_msg.starts_with('#') {
             let reply_content: String;
             match user_msg {
                 "#查余额" => reply_content = format!("当前余额：{}", guest.credit),
@@ -328,7 +328,7 @@ impl Agent {
                         reply_content = format!("当前会话累计消耗prompt token {in_tokens}个，completion token {out_tokens}个。");
                     }
                 },
-                "#新会话" => match self.clerk.create_conversation(&guest, &assistant) {
+                "#新会话" => match self.clerk.create_conversation(guest, &assistant) {
                     Err(e) => {
                         reply_content = format!("新建会话记录失败：{}, {e}", guest.name);
                         tracing::error!(reply_content);
@@ -351,7 +351,7 @@ impl Agent {
             let err_msg = format!("获取消息内容类型失败：{}, {e}", guest.name);
             tracing::error!(err_msg);
             let content = Text::new(err_msg);
-            if let Err(e) = self.reply(&received_msg, content).await {
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送消息内容类型错误消息时出错: {}", e);
             }
             return;
@@ -369,7 +369,7 @@ impl Agent {
             let err_msg = format!("新增消息记录失败：{}, {e}", guest.name);
             tracing::error!(err_msg);
             let content = Text::new(err_msg);
-            if let Err(e) = self.reply(&received_msg, content).await {
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送新增消息错误消息时出错: {}", e);
             }
             return;
@@ -382,7 +382,7 @@ impl Agent {
                 let err_msg = format!("获取会话记录失败：{}, {e}", guest.name);
                 tracing::error!(err_msg);
                 let content = Text::new(err_msg);
-                if let Err(e) = self.reply(&received_msg, content).await {
+                if let Err(e) = self.reply(received_msg, content).await {
                     tracing::error!("发送获取消息错误消息时出错: {}", e);
                 }
                 return;
@@ -396,7 +396,7 @@ impl Agent {
             let err_msg = format!("获取Provider记录失败：{}, {e}", guest.name);
             tracing::error!(err_msg);
             let content = Text::new(err_msg);
-            if let Err(e) = self.reply(&received_msg, content).await {
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送获取Provider错误消息时出错: {}", e);
             }
             return;
@@ -417,10 +417,10 @@ impl Agent {
         if let Err(e) = &response {
             tracing::error!("获取AI消息失败: {}", e);
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
-            let content = Text::new(format!(
-                "获取AI回复时发生错误。请等一分钟再试，或者向管理员寻求帮助。"
-            ));
-            if let Err(e) = self.reply(&received_msg, content).await {
+            let content = Text::new(
+                "获取AI回复时发生错误。请等一分钟再试，或者向管理员寻求帮助。".to_string(),
+            );
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送AI错误通知失败：{e}");
             }
             return;
@@ -431,10 +431,9 @@ impl Agent {
         if response.choices().is_empty() {
             tracing::warn!("AI消息为空");
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
-            let content = Text::new(format!(
-                "AI没有返回有效消息。请等一分钟再试，或者向管理员寻求帮助。"
-            ));
-            if let Err(e) = self.reply(&received_msg, content).await {
+            let content =
+                Text::new("AI没有返回有效消息。请等一分钟再试，或者向管理员寻求帮助。".to_string());
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送AI错误通知失败：{e}");
             }
             return;
@@ -455,7 +454,7 @@ impl Agent {
                 let err_msg = format!("记录AI消息失败：{}, {e}", guest.name);
                 tracing::error!(err_msg);
                 let content = Text::new(err_msg);
-                if let Err(e) = self.reply(&received_msg, content).await {
+                if let Err(e) = self.reply(received_msg, content).await {
                     tracing::error!("发送记录AI消息错误时出错: {}", e);
                 }
                 return;
@@ -465,11 +464,11 @@ impl Agent {
         tracing::debug!("User {} AI message appended", received_msg.from_user_name);
 
         // 扣除相应余额
-        if let Err(e) = self.clerk.update_user(&guest, -response.charge(), false) {
+        if let Err(e) = self.clerk.update_user(guest, -response.charge(), false) {
             let err_msg = format!("更新用户账户失败：{}, {e}", guest.name);
             tracing::error!(err_msg);
             let content = Text::new(err_msg);
-            if let Err(e) = self.reply(&received_msg, content).await {
+            if let Err(e) = self.reply(received_msg, content).await {
                 tracing::error!("发送账户更新错误消息时出错: {}", e);
             }
             return;
@@ -477,7 +476,7 @@ impl Agent {
 
         // 回复用户最终结果
         let content = Text::new(ai_reply.content);
-        if let Err(e) = self.reply(&received_msg, content).await {
+        if let Err(e) = self.reply(received_msg, content).await {
             tracing::error!("回复用户消息失败：{e}")
         }
     }
