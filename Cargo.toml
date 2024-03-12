@@ -31,5 +31,5 @@ tower-http = { version = "0.5.1", features = ["trace"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 uuid = { version = "1.7.0", features = ["v4"] }
-wecom-agent = "0.1.13"
+wecom-agent = "0.1.14"
 wecom-crypto = "0.1.6"
