@@ -139,7 +139,7 @@ impl Agent {
         };
 
         // 是管理员指令吗？
-        // 管理员消息由管理员账户(Guest::admin=true)发送，并且内容匹配管理员指令规则(#指令内容)。
+        // 管理员消息由管理员账户(Guest::admin=true)发送，并且内容匹配管理员指令规则。
         // 此过程出现的任何错误，均需要告知管理员。
         if guest.admin && received_msg.content.trim().starts_with("$$") {
             let sys_reply =
@@ -247,7 +247,7 @@ impl Agent {
     // 处理常规用户消息
     async fn handle_guest_msg(&self, guest: &Guest, received_msg: &ReceivedMsg) {
         // 用户账户有效？
-        if guest.credit < 0.0 {
+        if guest.credit <= 0.0 {
             tracing::warn!("余额不足。账户{}欠款：{}。", guest.name, guest.credit.abs());
             // 告知用户欠款详情
             let content = Text::new(format!("余额不足。当前账户欠款：{}。", guest.credit.abs()));
