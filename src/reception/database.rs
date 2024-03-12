@@ -8,12 +8,98 @@ use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 pub use models::{
-    Assistant, ContentType, Conversation, Guest, Message, MessageType, NewConversation, NewGuest,
-    NewMessage, Provider,
+    Assistant, ContentType, Conversation, DbStatus, Guest, Message, MessageType, NewConversation,
+    NewGuest, NewMessage, Provider,
 };
 use std::env;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+
+// 使用默认内容填充数据库。当数据库第一次初始化时使用。
+fn default_init(
+    connections: &Pool<ConnectionManager<SqliteConnection>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    // 填充默认的管理员用户
+    {
+        use schema::guests;
+        let admin = env::var("APP_ADMIN").expect("Environment variable $APP_ADMIN must be set");
+        let timestamp = Utc::now().naive_utc();
+        let conn = &mut connections.get()?;
+        diesel::insert_into(guests::table)
+            .values((
+                guests::id.eq(1),
+                guests::name.eq(admin),
+                guests::credit.eq(0.0),
+                guests::created_at.eq(timestamp),
+                guests::updated_at.eq(timestamp),
+                guests::admin.eq(true),
+            ))
+            .execute(conn)?;
+    }
+
+    // 填充AI供应商
+    {
+        use schema::providers;
+        let conn = &mut connections.get()?;
+        let current_providers = vec![(
+            providers::name.eq("openai/gpt4-32k"),
+            providers::max_tokens.eq(32 * 1000),
+        )];
+        diesel::insert_into(providers::table)
+            .values(&current_providers)
+            .execute(conn)?;
+    }
+
+    // 填充AI助手
+    {
+        use schema::assistants::dsl::*;
+        let conn = &mut connections.get()?;
+        let current_assistants = vec![(name.eq("小白"), agent_id.eq(1000002), provider_id.eq(1))];
+        diesel::insert_into(assistants)
+            .values(&current_assistants)
+            .execute(conn)?;
+    }
+
+    // 填充消息类型
+    {
+        use schema::msg_types::dsl::*;
+        let conn = &mut connections.get()?;
+        let message_types = vec![name.eq("system"), name.eq("user"), name.eq("assistant")];
+        diesel::insert_into(msg_types)
+            .values(&message_types)
+            .execute(conn)?;
+    }
+
+    // 填充消息内容类型
+    {
+        use schema::content_types::dsl::*;
+        let conn = &mut connections.get()?;
+        let cnt_types = vec![
+            name.eq("text"),
+            name.eq("image"),
+            name.eq("voice"),
+            name.eq("video"),
+            name.eq("file"),
+            name.eq("markdown"),
+            name.eq("news"),
+            name.eq("textcard"),
+        ];
+        diesel::insert_into(content_types)
+            .values(&cnt_types)
+            .execute(conn)?;
+    }
+
+    // 填充数据库初始化日期
+    {
+        use schema::db_init_status::dsl::*;
+        let conn = &mut connections.get()?;
+        diesel::insert_into(db_init_status)
+            .values(initialized_at.eq(Utc::now().naive_utc()))
+            .execute(conn)?;
+    }
+
+    Ok(())
+}
 
 pub struct DBAgent {
     connections: Pool<ConnectionManager<SqliteConnection>>,
@@ -34,75 +120,27 @@ impl DBAgent {
             conn.run_pending_migrations(MIGRATIONS)?;
         }
 
-        // 填充默认的管理员用户
+        // 数据库默认内容需要初始化？
+        let db_initialized: bool;
         {
-            use schema::guests;
-            let admin = env::var("APP_ADMIN").expect("Environment variable $APP_ADMIN must be set");
-            let timestamp = Utc::now().naive_utc();
             let conn = &mut connections.get()?;
-            diesel::insert_into(guests::table)
-                .values((
-                    guests::id.eq(1),
-                    guests::name.eq(admin),
-                    guests::credit.eq(0.0),
-                    guests::created_at.eq(timestamp),
-                    guests::updated_at.eq(timestamp),
-                    guests::admin.eq(true),
-                ))
-                .execute(conn)?;
+            db_initialized = match schema::db_init_status::table
+                .find(1)
+                .first::<DbStatus>(conn)
+            {
+                Ok(o) => {
+                    tracing::info!("当前数据库初始化于{}", o.initialized_at);
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("数据库尚未初始化。将初始化数据库。{}", e);
+                    false
+                }
+            };
         }
-
-        // 填充AI供应商
-        {
-            use schema::providers;
-            let conn = &mut connections.get()?;
-            let current_providers = vec![(
-                providers::name.eq("openai/gpt4-32k"),
-                providers::max_tokens.eq(32 * 1000),
-            )];
-            diesel::insert_into(providers::table)
-                .values(&current_providers)
-                .execute(conn)?;
-        }
-
-        // 填充AI助手
-        {
-            use schema::assistants::dsl::*;
-            let conn = &mut connections.get()?;
-            let current_assistants =
-                vec![(name.eq("小白"), agent_id.eq(1000002), provider_id.eq(1))];
-            diesel::insert_into(assistants)
-                .values(&current_assistants)
-                .execute(conn)?;
-        }
-
-        // 填充消息类型
-        {
-            use schema::msg_types::dsl::*;
-            let conn = &mut connections.get()?;
-            let message_types = vec![name.eq("system"), name.eq("user"), name.eq("assistant")];
-            diesel::insert_into(msg_types)
-                .values(&message_types)
-                .execute(conn)?;
-        }
-
-        // 填充消息内容类型
-        {
-            use schema::content_types::dsl::*;
-            let conn = &mut connections.get()?;
-            let cnt_types = vec![
-                name.eq("text"),
-                name.eq("image"),
-                name.eq("voice"),
-                name.eq("video"),
-                name.eq("file"),
-                name.eq("markdown"),
-                name.eq("news"),
-                name.eq("textcard"),
-            ];
-            diesel::insert_into(content_types)
-                .values(&cnt_types)
-                .execute(conn)?;
+        if !db_initialized {
+            default_init(&connections)?;
+            tracing::info!("数据库初始化完成。");
         }
 
         Ok(Self { connections })

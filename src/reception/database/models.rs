@@ -2,6 +2,15 @@ use super::schema;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 
+// 数据库初始化状态
+#[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
+#[diesel(table_name = schema::db_init_status)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct DbStatus {
+    pub id: i32,
+    pub initialized_at: NaiveDateTime,
+}
+
 // Guest为人类用户
 #[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
 #[diesel(table_name = schema::guests)]

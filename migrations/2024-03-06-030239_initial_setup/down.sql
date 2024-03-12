@@ -13,3 +13,5 @@ DROP TABLE assistants;
 DROP TABLE providers;
 -- 移除用户表
 DROP TABLE guests;
+-- 移除数据库初始化状态表
+DROP TABLE db_init_status;

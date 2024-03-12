@@ -28,6 +28,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    db_init_status (id) {
+        id -> Integer,
+        initialized_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     guests (id) {
         id -> Integer,
         name -> Text,
@@ -78,6 +85,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     assistants,
     content_types,
     conversations,
+    db_init_status,
     guests,
     messages,
     msg_types,

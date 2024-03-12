@@ -1,3 +1,8 @@
+-- 初始化应用状态表
+CREATE TABLE db_init_status (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    initialized_at TIMESTAMP NOT NULL
+);
 -- 初始化用户表
 CREATE TABLE guests (
     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
