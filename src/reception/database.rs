@@ -133,7 +133,7 @@ impl DBAgent {
                     true
                 }
                 Err(e) => {
-                    tracing::warn!("数据库尚未初始化。将初始化数据库。{}", e);
+                    tracing::warn!("数据库尚未初始化（{e}）。将初始化数据库。");
                     false
                 }
             };
