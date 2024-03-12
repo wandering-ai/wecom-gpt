@@ -2,6 +2,9 @@ use serde::Deserialize;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use wecom_gpt::app;
 
+// Embed the app version
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
 #[derive(Deserialize, Debug)]
 struct Configuration {
     app_token: String,
@@ -24,10 +27,13 @@ async fn main() {
                 .from_env_lossy(),
         )
         .init();
+    tracing::info!("Version: {VERSION}");
 
     // Read in configuration from OS env.
-    let c: Configuration =
-        envy::from_env::<Configuration>().expect("Please provide all required env vars");
+    let c: Configuration = match envy::from_env::<Configuration>() {
+        Err(e) => panic!("运行参数不完整：{e}"),
+        Ok(c) => c,
+    };
 
     // Init the service
     let service = app(
