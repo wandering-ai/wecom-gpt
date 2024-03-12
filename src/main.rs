@@ -19,6 +19,8 @@ struct Configuration {
 #[tokio::main]
 async fn main() {
     // Setup tracing
+    let file_appender = tracing_appender::rolling::daily("./log", "zoo.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt()
         .compact()
         .with_env_filter(
@@ -26,6 +28,7 @@ async fn main() {
                 .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
+        .with_writer(non_blocking)
         .init();
     tracing::info!("Version: {VERSION}");
 
