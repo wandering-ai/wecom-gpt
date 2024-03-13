@@ -210,6 +210,7 @@ impl DBAgent {
     }
 
     /// 删除用户
+    #[allow(dead_code)]
     pub fn remove_user(
         &self,
         by_name: &str,

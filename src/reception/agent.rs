@@ -268,8 +268,7 @@ impl Agent {
             }
             return;
         }
-        let assistant: Assistant;
-        match self.clerk.get_assistant_by_agent_id(agent_id.unwrap()) {
+        let assistant: Assistant = match self.clerk.get_assistant_by_agent_id(agent_id.unwrap()) {
             Err(e) => {
                 let err_msg = format!("获取Assistant失败：{e}");
                 tracing::error!(err_msg);
@@ -279,8 +278,8 @@ impl Agent {
                 }
                 return;
             }
-            Ok(a) => assistant = a,
-        }
+            Ok(a) => a,
+        };
 
         // 账户OK，获取用户会话记录。若会话记录不存在，则创建新记录。
         let conversation: DBConversation;
@@ -379,8 +378,8 @@ impl Agent {
         }
 
         // 获取AI可以处理的会话记录。
-        let raw_msgs: Vec<DBMessage>;
-        match self.clerk.get_messages_by_conversation(&conversation) {
+        let raw_msgs: Vec<DBMessage> = match self.clerk.get_messages_by_conversation(&conversation)
+        {
             Err(e) => {
                 let err_msg = format!("获取会话记录失败：{}, {e}", guest.name);
                 tracing::error!(err_msg);
@@ -390,8 +389,8 @@ impl Agent {
                 }
                 return;
             }
-            Ok(r) => raw_msgs = r,
-        }
+            Ok(r) => r,
+        };
 
         // 若会话超长，丢弃最早内容。
         let provider = self.clerk.get_provider(assistant.provider_id);
@@ -443,8 +442,7 @@ impl Agent {
         }
 
         // 更新AI回复到会话记录
-        let ai_reply: DBMessage;
-        match self.clerk.create_message(
+        let ai_reply: DBMessage = match self.clerk.create_message(
             &conversation,
             &OaiMsgRole::Assistant.into(),
             response.choices()[0].message().content(),
@@ -462,8 +460,8 @@ impl Agent {
                 }
                 return;
             }
-            Ok(r) => ai_reply = r,
-        }
+            Ok(r) => r,
+        };
         tracing::debug!("User {} AI message appended", received_msg.from_user_name);
 
         // 扣除相应余额。注意此操作不应当影响用户权限角色。
