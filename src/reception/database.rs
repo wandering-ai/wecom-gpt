@@ -7,6 +7,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+pub use error::NotFound;
 pub use models::{
     Assistant, ContentType, Conversation, DbStatus, Guest, Message, MessageType, NewConversation,
     NewGuest, NewMessage, Provider,
@@ -217,9 +218,7 @@ impl DBAgent {
         use self::schema::guests::dsl::*;
         let user = self.get_user(by_name)?;
         if user.is_none() {
-            return Err(Box::new(error::Error::new(format!(
-                "Can not find user with name `{by_name}`"
-            ))));
+            return Err(Box::new(error::NotFound));
         }
         let connection = &mut self.connections.get()?;
         let num_deleted = diesel::delete(guests.find(user.unwrap().id))
@@ -454,23 +453,15 @@ mod error {
     use std::fmt;
 
     #[derive(Debug, Clone)]
-    pub struct Error {
-        text: String,
-    }
+    pub struct NotFound;
 
-    impl Error {
-        pub fn new(text: String) -> Self {
-            Self { text }
-        }
-    }
-
-    impl fmt::Display for Error {
+    impl fmt::Display for NotFound {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "{}", self.text)
+            write!(f, "Item not found in database")
         }
     }
 
-    impl std::error::Error for Error {}
+    impl std::error::Error for NotFound {}
 }
 
 #[cfg(test)]

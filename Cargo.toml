@@ -4,11 +4,7 @@ version = "0.1.1"
 edition = "2021"
 
 [dependencies]
-aes = "0.8.3"
 axum = "0.7.4"
-base16ct = { version = "0.2.0", features = ["alloc"] }
-base64 = "0.21.7"
-cbc = { version = "0.1.2", features = ["alloc"] }
 chrono = "0.4.34"
 diesel = { version = "2.1.4", features = [
     "sqlite",
@@ -17,20 +13,15 @@ diesel = { version = "2.1.4", features = [
     "chrono",
 ] }
 diesel_migrations = { version = "2.1.0", features = ["sqlite"] }
-envy = "0.4.2"
 libsqlite3-sys = { version = "0.27.0", features = ["bundled"] }
 r2d2 = "0.8.10"
 rand = "0.8.5"
-reqwest = "0.11.24"
+reqwest = "0.11.26"
 serde = { version = "1.0.195", features = ["derive"] }
 serde-xml-rs = "0.6.0"
-sha1 = "0.10.6"
 tokio = { version = "1.35.1", features = ["full"] }
 tower = { version = "0.4.13", features = ["util"] }
 tower-http = { version = "0.5.1", features = ["trace"] }
 tracing = "0.1.40"
-tracing-appender = "0.2.3"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-uuid = { version = "1.7.0", features = ["v4"] }
 wecom-agent = "0.1.14"
 wecom-crypto = "0.1.6"
