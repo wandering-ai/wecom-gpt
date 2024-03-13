@@ -7,7 +7,6 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
-pub use error::NotFound;
 pub use models::{
     Assistant, ContentType, Conversation, DbStatus, Guest, Message, MessageType, NewConversation,
     NewGuest, NewMessage, Provider,
