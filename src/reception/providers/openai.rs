@@ -1,48 +1,152 @@
-use crate::reception::database;
+/// OpenAI作为API供应商
+use crate::reception::core::{AIConversation, AIMessage, AIProvider, MessageRole};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::convert::{From, Into};
-use std::error::Error as StdError;
+use std::error::Error;
 
-#[derive(Debug, Clone)]
-pub struct OpenAiAgent {
-    endpoint: String,
-    api_key: String,
-    client: reqwest::Client,
+// Chat请求返回结果
+// 示例
+// {
+//     "id":"chatcmpl-6v7mkQj980V1yBec6ETrKPRqFjNw9",
+//     "object":"chat.completion",
+//     "created":1679072642,
+//     "model":"gpt-35-turbo",
+//     "usage":{
+//        "prompt_tokens":58,
+//        "completion_tokens":68,
+//        "total_tokens":126
+//     },
+//     "choices":[
+//        {
+//           "message":{
+//              "role":"assistant",
+//              "content":"Yes, other Azure AI services also support customer managed keys. Azure AI services offer multiple options for customers to manage keys, such as using Azure Key Vault, customer-managed keys in Azure Key Vault or customer-managed keys through Azure Storage service. This helps customers ensure that their data is secure and access to their services is controlled."
+//           },
+//           "finish_reason":"stop",
+//           "index":0
+//        }
+//     ]
+// }
+#[derive(Deserialize)]
+struct ChatResponse {
+    #[allow(dead_code)]
+    id: String,
+    #[allow(dead_code)]
+    object: String,
+    #[allow(dead_code)]
+    created: usize,
+    #[allow(dead_code)]
+    model: String,
+    usage: ApiUsage,
+    choices: Vec<ChatResult>,
 }
 
-impl OpenAiAgent {
-    pub fn new(endpoint: &str, api_key: &str) -> Self {
+#[derive(Deserialize)]
+struct ApiUsage {
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    #[allow(dead_code)]
+    total_tokens: usize,
+}
+
+#[derive(Deserialize)]
+pub struct ChatResult {
+    message: ChatMessage,
+    #[allow(dead_code)]
+    finish_reason: String,
+    #[allow(dead_code)]
+    index: usize,
+}
+
+// 会话记录中的每一条消息
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct ChatMessage {
+    role: ChatRole,
+    content: String,
+}
+
+impl ChatMessage {
+    pub fn new(role: ChatRole, content: String) -> Self {
+        Self { role, content }
+    }
+}
+
+impl<T> From<T> for ChatMessage
+where
+    T: AIMessage,
+{
+    fn from(value: T) -> Self {
         Self {
-            endpoint: endpoint.to_string(),
-            api_key: api_key.to_string(),
-            client: reqwest::Client::new(),
+            role: value.role().into(),
+            content: value.content().to_string(),
+        }
+    }
+}
+
+// 消息角色枚举。来自OpenAI的定义
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub enum ChatRole {
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    Assistant,
+    #[serde(rename = "tool")]
+    Tool,
+    #[serde(rename = "function")]
+    Function,
+}
+
+impl From<ChatRole> for MessageRole {
+    fn from(value: ChatRole) -> Self {
+        match value {
+            ChatRole::Assistant => MessageRole::Assistant,
+            ChatRole::System => MessageRole::System,
+            ChatRole::User => MessageRole::User,
+            _ => MessageRole::Supplementary,
+        }
+    }
+}
+
+impl From<MessageRole> for ChatRole {
+    fn from(value: MessageRole) -> Self {
+        match value {
+            MessageRole::Assistant => ChatRole::Assistant,
+            MessageRole::System => ChatRole::System,
+            MessageRole::User => ChatRole::User,
+            MessageRole::Supplementary => ChatRole::Tool,
+        }
+    }
+}
+
+// 消息结构体，包含成本模型
+struct ChargeableMsg {
+    pub prompt_token_price: f64,
+    pub completion_token_price: f64,
+    pub response: ChatResponse,
+}
+
+impl AIMessage for ChargeableMsg {
+    fn content(&self) -> &str {
+        match self.response.choices.get(0) {
+            Some(r) => &r.message.content,
+            None => "",
         }
     }
 
-    // 请求Chat API
-    pub async fn chat(
-        &self,
-        conversation: &Conversation,
-    ) -> Result<ChatResponse, Box<dyn StdError + Send + Sync>> {
-        let header = {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                HeaderName::from_static("api-key"),
-                HeaderValue::from_str(&self.api_key).expect("API key should be valid"),
-            );
-            headers
-        };
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .json(&conversation)
-            .headers(header)
-            .send()
-            .await?
-            .json::<ChatResponse>()
-            .await?;
-        Ok(response)
+    fn role(&self) -> MessageRole {
+        match self.response.choices.get(0) {
+            Some(r) => r.message.role.into(),
+            None => MessageRole::Supplementary,
+        }
+    }
+
+    fn cost(&self) -> f64 {
+        ((self.prompt_token_price * self.response.usage.prompt_tokens as f64)
+            + (self.completion_token_price * self.response.usage.completion_tokens as f64))
+            / 1000.0
     }
 }
 
@@ -69,198 +173,87 @@ impl OpenAiAgent {
 //     ]
 // }
 #[derive(Serialize)]
-pub struct Conversation {
-    messages: Vec<Message>,
+pub struct ChatConversation {
+    messages: Vec<ChatMessage>,
 }
 
-impl From<Vec<database::Message>> for Conversation {
-    fn from(value: Vec<database::Message>) -> Self {
-        value.into()
-    }
-}
-
-impl From<Vec<&database::Message>> for Conversation {
-    fn from(value: Vec<&database::Message>) -> Self {
-        let mut messages = Vec::<Message>::new();
+impl<T> From<T> for ChatConversation
+where
+    T: AIConversation,
+{
+    fn from(value: T) -> Self {
+        let mut messages = Vec::<ChatMessage>::new();
 
         // 首条消息应当为系统消息
-        let mut msg_iter = value.iter();
-        let sys_msg = match value.len() {
-            n if n > 0 => &msg_iter.next().unwrap().content,
+        let mut msg_iter = value.messages().iter();
+        let sys_msg = match value.messages().len() {
+            n if n > 0 => &msg_iter.next().unwrap().content(),
             _ => "You are a helpful assistant.",
         };
-        messages.push(Message::new(MessageRole::System, sys_msg.to_owned()));
+        messages.push(ChatMessage::new(ChatRole::System, sys_msg.to_owned()));
 
         // 追加剩余消息
         for msg in msg_iter {
-            messages.push(Message::from(*msg));
+            messages.push(ChatMessage::from(**msg));
         }
 
         Self { messages }
     }
 }
 
-// 会话记录中的每一条消息
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub struct Message {
-    role: MessageRole,
-    content: String,
+// OpenAI模型部署方案
+#[derive(Debug, Clone)]
+pub struct Deployment {
+    pub endpoint: String,
+    pub api_key: String,
+    pub prompt_token_price: f64,
+    pub completion_token_price: f64,
+    pub max_tokens: u64,
 }
 
-impl Message {
-    pub fn new(role: MessageRole, content: String) -> Self {
-        Self { role, content }
-    }
-
-    pub fn content(&self) -> &str {
-        &self.content
-    }
+#[derive(Debug, Clone)]
+pub struct Agent {
+    deployment: Deployment,
+    client: reqwest::Client,
 }
 
-// 数据库消息转换为当前模块消息
-impl From<database::Message> for Message {
-    fn from(value: database::Message) -> Self {
-        value.into()
-    }
-}
-
-impl From<&database::Message> for Message {
-    fn from(value: &database::Message) -> Self {
+impl Agent {
+    pub fn new(deployment: Deployment) -> Self {
         Self {
-            role: match value.message_type {
-                1 => MessageRole::System,
-                2 => MessageRole::User,
-                3 => MessageRole::Assistant,
-                i32::MIN..=0_i32 | 4_i32..=i32::MAX => MessageRole::User,
-            },
-            content: value.content.clone(),
+            deployment,
+            client: reqwest::Client::new(),
         }
     }
 }
 
-// 消息角色枚举
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub enum MessageRole {
-    #[serde(rename = "system")]
-    System,
-    #[serde(rename = "user")]
-    User,
-    #[serde(rename = "assistant")]
-    Assistant,
-}
+impl AIProvider for Agent {
+    async fn chat<T>(&self, conversation: T) -> Result<impl AIMessage, Box<dyn Error + Send + Sync>>
+    where
+        T: Into<ChatConversation> + Serialize,
+    {
+        let header = {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                HeaderName::from_static("api-key"),
+                HeaderValue::from_str(&self.deployment.api_key).expect("API key should be parsed"),
+            );
+            headers
+        };
 
-// 消息角色转换为数据库角色
-impl From<MessageRole> for database::MessageType {
-    fn from(val: MessageRole) -> Self {
-        match val {
-            MessageRole::System => database::MessageType {
-                id: 1,
-                name: "system".to_string(),
-            },
-            MessageRole::User => database::MessageType {
-                id: 2,
-                name: "user".to_string(),
-            },
-            MessageRole::Assistant => database::MessageType {
-                id: 3,
-                name: "assistant".to_string(),
-            },
-        }
-    }
-}
+        let response = self
+            .client
+            .post(&self.deployment.endpoint)
+            .json(&conversation)
+            .headers(header)
+            .send()
+            .await?
+            .json::<ChatResponse>()
+            .await?;
 
-// 数据库角色转换为消息角色
-impl From<database::MessageType> for MessageRole {
-    fn from(value: database::MessageType) -> Self {
-        value.into()
-    }
-}
-impl From<&database::MessageType> for MessageRole {
-    fn from(value: &database::MessageType) -> Self {
-        match value.name.as_str() {
-            "system" => Self::System,
-            "user" => Self::User,
-            "assistant" => Self::Assistant,
-            &_ => Self::User,
-        }
-    }
-}
-
-// Chat请求返回结果
-// 示例
-// {
-//     "id":"chatcmpl-6v7mkQj980V1yBec6ETrKPRqFjNw9",
-//     "object":"chat.completion",
-//     "created":1679072642,
-//     "model":"gpt-35-turbo",
-//     "usage":{
-//        "prompt_tokens":58,
-//        "completion_tokens":68,
-//        "total_tokens":126
-//     },
-//     "choices":[
-//        {
-//           "message":{
-//              "role":"assistant",
-//              "content":"Yes, other Azure AI services also support customer managed keys. Azure AI services offer multiple options for customers to manage keys, such as using Azure Key Vault, customer-managed keys in Azure Key Vault or customer-managed keys through Azure Storage service. This helps customers ensure that their data is secure and access to their services is controlled."
-//           },
-//           "finish_reason":"stop",
-//           "index":0
-//        }
-//     ]
-// }
-#[derive(Deserialize)]
-pub struct ChatResponse {
-    #[allow(dead_code)]
-    id: String,
-    #[allow(dead_code)]
-    object: String,
-    #[allow(dead_code)]
-    created: usize,
-    #[allow(dead_code)]
-    model: String,
-    usage: ApiUsage,
-    choices: Vec<ChatResult>,
-}
-
-impl ChatResponse {
-    pub fn choices(&self) -> &Vec<ChatResult> {
-        &self.choices
-    }
-
-    pub fn charge(&self) -> f64 {
-        (self.usage.prompt_tokens as f64 * 0.06 + self.usage.completion_tokens as f64 * 0.12)
-            / 1000.0
-    }
-
-    pub fn prompt_tokens(&self) -> usize {
-        self.usage.prompt_tokens
-    }
-
-    pub fn completion_tokens(&self) -> usize {
-        self.usage.completion_tokens
-    }
-}
-
-#[derive(Deserialize)]
-struct ApiUsage {
-    prompt_tokens: usize,
-    completion_tokens: usize,
-    #[allow(dead_code)]
-    total_tokens: usize,
-}
-
-#[derive(Deserialize)]
-pub struct ChatResult {
-    message: Message,
-    #[allow(dead_code)]
-    finish_reason: String,
-    #[allow(dead_code)]
-    index: usize,
-}
-
-impl ChatResult {
-    pub fn message(&self) -> &Message {
-        &self.message
+        Ok(ChargeableMsg {
+            prompt_token_price: self.deployment.prompt_token_price,
+            completion_token_price: self.deployment.completion_token_price,
+            response,
+        })
     }
 }

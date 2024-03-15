@@ -56,6 +56,7 @@ diesel::table! {
         content_type -> Integer,
         prompt_tokens -> Integer,
         completion_tokens -> Integer,
+        meta -> Text,
     }
 }
 
@@ -70,7 +71,10 @@ diesel::table! {
     providers (id) {
         id -> Integer,
         name -> Text,
+        endpoint -> Text,
         max_tokens -> Integer,
+        prompt_token_price -> Double,
+        completion_token_price -> Double,
     }
 }
 

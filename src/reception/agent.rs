@@ -1,11 +1,11 @@
 //! Agent负责协调用户与AI之间的交互过程
+use super::core::{AIConversation, AIMessage, AIProvider, MessageRole as AIMessageRole};
 use axum::extract::Query;
 use axum::http::StatusCode;
-use error::Error;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_xml_rs::from_str;
-use std::path::Path;
+use std::fmt;
 
 // 企业微信加解密模块
 use wecom_crypto::CryptoAgent;
@@ -17,17 +17,20 @@ use wecom_agent::{
 };
 
 // OpenAI API
-use super::providers::openai::{MessageRole as OaiMsgRole, OpenAiAgent};
+use super::providers::openai::{
+    Agent as OaiAgent, ChatRole as OaiMsgRole, Deployment as OaiDeploy,
+};
 
 /// 数据库模块
 use super::database::{
-    Assistant, Conversation as DBConversation, DBAgent, Guest, Message as DBMessage,
+    Agent as DBAgent, Assistant as DBAssistant, Conversation as DBConversation, Guest as DBGuest,
+    Message as DBMessage,
 };
 
 /// Agent负责协调用户与AI之间的交互过程
 pub struct Agent {
     app_token: String,
-    ai_agent: OpenAiAgent,
+    ai_agent: OaiAgent,
     crypto_agent: CryptoAgent,
     wecom_agent: WecomAgent,
     clerk: DBAgent,
@@ -40,21 +43,34 @@ impl Agent {
         b64encoded_aes_key: &str,
         corp_id: &str,
         secret: &str,
-        oai_endpoint: &str,
+        provider_id: i32,
         oai_key: &str,
-        db_path: &Path,
+        db_path: &str,
     ) -> Result<Self, Error> {
-        let db_agent = DBAgent::new(db_path.to_str().expect("Database path should be valid"));
-        if let Err(e) = db_agent {
-            return Err(Error::new(format!("数据库初始化失败：{}", e)));
-        }
+        // 首先初始化数据库
+        let db_agent = match DBAgent::new(db_path) {
+            Err(e) => return Err(Error::new(format!("数据库初始化失败：{}", e))),
+            Ok(a) => a,
+        };
+
+        // 从数据库中读取AI provider信息
+        let ai_provider = db_agent
+            .get_provider(provider_id)
+            .map_err(|e| Error(e.to_string()))?;
+        let oai_deploy = OaiDeploy {
+            endpoint: ai_provider.endpoint,
+            api_key: oai_key.to_owned(),
+            prompt_token_price: ai_provider.prompt_token_price,
+            completion_token_price: ai_provider.completion_token_price,
+            max_tokens: ai_provider.max_tokens as u64,
+        };
 
         Ok(Self {
             app_token: String::from(app_token),
-            ai_agent: OpenAiAgent::new(oai_endpoint, oai_key),
+            ai_agent: OaiAgent::new(oai_deploy),
             crypto_agent: wecom_crypto::CryptoAgent::new(b64encoded_aes_key),
             wecom_agent: WecomAgent::new(corp_id, secret),
-            clerk: db_agent.expect("Database should be initialized"),
+            clerk: db_agent,
         })
     }
 
@@ -117,7 +133,7 @@ impl Agent {
 
         // 谁发送的消息？若用户不存在，则自动创建该用户。
         let guest_name = &received_msg.from_user_name;
-        let guest: Guest;
+        let guest: DBGuest;
         match self.clerk.get_user(guest_name) {
             Err(e) => {
                 tracing::error!("获取用户数据失败: {}", e);
@@ -155,7 +171,7 @@ impl Agent {
         }
 
         // 处理常规用户消息
-        self.handle_guest_msg(&guest, &received_msg).await;
+        self.handle_guest_msg(&DBguest, &received_msg).await;
     }
 
     // 向用户回复一条消息。消息内容content需要满足WecomMessage。
@@ -245,7 +261,7 @@ impl Agent {
     }
 
     // 处理常规用户消息
-    async fn handle_guest_msg(&self, guest: &Guest, received_msg: &ReceivedMsg) {
+    async fn handle_guest_msg(&self, guest: &DBGuest, received_msg: &ReceivedMsg) {
         // 用户账户有效？
         if guest.credit <= 0.0 {
             tracing::warn!("余额不足。账户{}欠款：{}。", guest.name, guest.credit.abs());
@@ -268,7 +284,7 @@ impl Agent {
             }
             return;
         }
-        let assistant: Assistant = match self.clerk.get_assistant_by_agent_id(agent_id.unwrap()) {
+        let assistant: DBAssistant = match self.clerk.get_assistant_by_agent_id(agent_id.unwrap()) {
             Err(e) => {
                 let err_msg = format!("获取Assistant失败：{e}");
                 tracing::error!(err_msg);
@@ -361,7 +377,7 @@ impl Agent {
         let content_type_text = content_type.as_ref().unwrap();
         if let Err(e) = self.clerk.create_message(
             &conversation,
-            &OaiMsgRole::User.into(),
+            &AIMessageRole::User.into(),
             &received_msg.content,
             content_type_text,
             0.0,
@@ -547,24 +563,19 @@ struct ReceivedMsg {
     agent_id: String,
 }
 
-pub mod error {
-    use std::error::Error as StdError;
-    use std::fmt;
+#[derive(Debug, Clone)]
+pub struct Error(String);
 
-    #[derive(Debug, Clone)]
-    pub struct Error(String);
-
-    impl Error {
-        pub fn new(text: String) -> Self {
-            Self(text)
-        }
+impl Error {
+    pub fn new(text: String) -> Self {
+        Self(text)
     }
-
-    impl fmt::Display for Error {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "{}", self.0)
-        }
-    }
-
-    impl StdError for Error {}
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for Error {}

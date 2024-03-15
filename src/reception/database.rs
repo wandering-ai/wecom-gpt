@@ -2,6 +2,7 @@
 mod models;
 mod schema;
 
+use super::core::MessageRole;
 use chrono::Utc;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -64,7 +65,12 @@ fn default_init(
     {
         use schema::msg_types::dsl::*;
         let conn = &mut connections.get()?;
-        let message_types = vec![name.eq("system"), name.eq("user"), name.eq("assistant")];
+        let message_types = vec![
+            name.eq("system"),
+            name.eq("user"),
+            name.eq("assistant"),
+            name.eq("supplementary"),
+        ];
         diesel::insert_into(msg_types)
             .values(&message_types)
             .execute(conn)?;
@@ -101,11 +107,11 @@ fn default_init(
     Ok(())
 }
 
-pub struct DBAgent {
+pub struct Agent {
     connections: Pool<ConnectionManager<SqliteConnection>>,
 }
 
-impl DBAgent {
+impl Agent {
     /// 初始化数据库
     pub fn new(
         database_url: &str,
@@ -756,6 +762,10 @@ mod tests {
                 super::MessageType {
                     id: 3,
                     name: "assistant".to_string(),
+                },
+                super::MessageType {
+                    id: 4,
+                    name: "supplementary".to_string(),
                 }
             ],
             msg_types

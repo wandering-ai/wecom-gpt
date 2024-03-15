@@ -15,8 +15,11 @@ CREATE TABLE guests (
 -- 初始化AI供应商表
 CREATE TABLE providers (
     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR NOT NULL,
-    max_tokens INTEGER NOT NULL
+    name VARCHAR UNIQUE NOT NULL,
+    endpoint TEXT NOT NULL,
+    max_tokens INTEGER NOT NULL,
+    prompt_token_price DOUBLE NOT NULL,
+    completion_token_price DOUBLE NOT NULL
 );
 -- 初始化企业微信应用表
 CREATE TABLE assistants (
@@ -54,5 +57,5 @@ CREATE TABLE messages (
     message_type INTEGER NOT NULL REFERENCES msg_types(id),
     content_type INTEGER NOT NULL REFERENCES content_types(id),
     prompt_tokens INTEGER NOT NULL,
-    completion_tokens INTEGER NOT NULL
+    completion_tokens INTEGER NOT NULL,
 );
