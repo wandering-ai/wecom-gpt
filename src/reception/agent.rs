@@ -128,6 +128,8 @@ impl Agent {
         }
         let received_msg: ReceivedMsg = xml_doc.expect("XML document should be valid.");
 
+        tracing::debug!("User message parsed");
+
         // 谁发送的消息？
         let guest_name = received_msg.from_user_name.as_str();
         let guest = match self.clerk.get_user(guest_name) {
@@ -159,11 +161,13 @@ impl Agent {
             && received_msg.content.trim().starts_with("$$")
             && received_msg.content.trim().ends_with("$$")
         {
+            tracing::debug!("Got admin message, going to handle it..");
             self.handle_admin_msg(&received_msg).await;
             return;
         }
 
         // 处理常规用户消息
+        tracing::debug!("Got guest message, going to handle it..");
         self.handle_guest_msg(&guest, &received_msg).await;
     }
 
@@ -215,7 +219,7 @@ impl Agent {
     // 回复消息。当遇到错误时记录。
     async fn reply_n_log(&self, msg: &str, received_msg: &ReceivedMsg) {
         let content = WecomText::new(msg.to_owned());
-        tracing::error!(msg);
+        tracing::info!(msg);
         if let Err(e) = self.reply(received_msg, content).await {
             tracing::error!("回复消息时出错: {}", e);
         }
@@ -301,6 +305,7 @@ impl Agent {
             }
             Ok(a) => a,
         };
+        tracing::debug!("Assistant found");
 
         // 账户OK，获取用户会话记录。若会话记录不存在，则创建新记录。
         let conversation: Conversation = match self.clerk.get_conversation(guest) {
@@ -329,6 +334,7 @@ impl Agent {
             }
             Ok(c) => c,
         };
+        tracing::debug!("Conversation got");
 
         // 是指令消息吗？指令消息需要无条件响应，且不会计入会话记录。
         let user_msg = received_msg.content.as_str();
@@ -336,7 +342,7 @@ impl Agent {
             let reply_content: String = match user_msg {
                 "#查余额" => format!("当前余额：{}", guest.credit),
                 "#查消耗" => format!(
-                    "当前会话累计消耗token{}个，费用{}。",
+                    "当前会话累计消耗token {}个，费用{}。",
                     conversation.tokens(),
                     conversation.cost()
                 ),
@@ -349,6 +355,7 @@ impl Agent {
             self.reply_n_log(&reply_content, received_msg).await;
             return;
         }
+        tracing::debug!("Not a instruction message");
 
         // 用户账户有效？
         if guest.credit <= 0.0 {
@@ -361,6 +368,7 @@ impl Agent {
             .await;
             return;
         }
+        tracing::debug!("User account check passed");
 
         // 记录用户消息，并与当前会话记录关联
         let new_msg = Message {
@@ -377,6 +385,7 @@ impl Agent {
             .await;
             return;
         }
+        tracing::debug!("User message appended");
 
         // 获取AI可以处理的会话记录。
         let conv_after_update = match self.clerk.get_conversation(guest) {
@@ -390,6 +399,7 @@ impl Agent {
             }
             Ok(c) => c,
         };
+        tracing::debug!("Conversation to process got");
 
         // 交由AI处理
         let response = match self.ai_agent.chat(&conv_after_update).await {
@@ -404,14 +414,17 @@ impl Agent {
                 return;
             }
         };
+        tracing::debug!("AI replied");
 
         // 更新AI回复到会话记录
+        tracing::debug!("Constructing reply message");
         let ai_reply = Message {
             content: response.content().to_owned(),
             role: response.role(),
             cost: response.cost(),
             tokens: response.tokens(),
         };
+        tracing::debug!("Reply message constructed");
         if let Err(e) = self.clerk.append_message(guest, &ai_reply) {
             self.reply_n_log(
                 &format!("添加消息到会话记录失败：{}, {e}", guest.name),
@@ -420,6 +433,7 @@ impl Agent {
             .await;
             return;
         }
+        tracing::debug!("AI's reply appended");
 
         // 扣除相应金额
         let guest_to_update = &mut guest.clone();
@@ -432,12 +446,14 @@ impl Agent {
             .await;
             return;
         }
+        tracing::debug!("User charged: {}", ai_reply.cost);
 
         // 回复用户最终结果
         let content = WecomText::new(ai_reply.content);
         if let Err(e) = self.reply(received_msg, content).await {
             tracing::error!("回复用户消息失败：{e}")
         }
+        tracing::debug!("Replied. This round is over.");
     }
 }
 
