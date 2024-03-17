@@ -287,18 +287,6 @@ impl Agent {
 
     // 处理常规用户消息
     async fn handle_guest_msg(&self, guest: &Guest, received_msg: &ReceivedMsg) {
-        // 用户账户有效？
-        if guest.credit <= 0.0 {
-            tracing::warn!("余额不足。账户{}欠款{}。", guest.name, guest.credit.abs());
-            // 告知用户欠款详情
-            self.reply_n_log(
-                &format!("余额不足。当前账户欠款：{}。", guest.credit.abs()),
-                received_msg,
-            )
-            .await;
-            return;
-        }
-
         // 获取当前Assistant
         let Ok(agent_id) = received_msg.agent_id.parse::<i32>() else {
             self.reply_n_log(&format!("转换AgentID失败"), received_msg)
@@ -342,7 +330,7 @@ impl Agent {
             Ok(c) => c,
         };
 
-        // 是指令消息吗？指令消息不会计入会话记录。
+        // 是指令消息吗？指令消息需要无条件响应，且不会计入会话记录。
         let user_msg = received_msg.content.as_str();
         if user_msg.starts_with('#') {
             let reply_content: String = match user_msg {
@@ -359,6 +347,18 @@ impl Agent {
                 &_ => "抱歉，暂不支持当前指令。".to_string(),
             };
             self.reply_n_log(&reply_content, received_msg).await;
+            return;
+        }
+
+        // 用户账户有效？
+        if guest.credit <= 0.0 {
+            tracing::warn!("余额不足。账户{}欠款{}。", guest.name, guest.credit.abs());
+            // 告知用户欠款详情
+            self.reply_n_log(
+                &format!("余额不足。当前账户欠款：{}。", guest.credit.abs()),
+                received_msg,
+            )
+            .await;
             return;
         }
 
