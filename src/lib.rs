@@ -23,8 +23,9 @@ pub fn app(
     b64encoded_aes_key: &str,
     corp_id: &str,
     secret: &str,
-    oai_endpoint: &str,
+    provider_id: i32,
     oai_key: &str,
+    db_path: &str,
 ) -> Router {
     // 初始化APP agent。
     let app_agent = match Agent::new(
@@ -32,9 +33,9 @@ pub fn app(
         b64encoded_aes_key,
         corp_id,
         secret,
-        1,
-        oai_endpoint,
+        provider_id,
         oai_key,
+        db_path,
     ) {
         Ok(agent) => agent,
         Err(e) => panic!("初始化应用错误：{e}"),
