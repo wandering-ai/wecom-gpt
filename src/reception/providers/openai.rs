@@ -1,9 +1,11 @@
 /// OpenAI作为API供应商
-use crate::reception::core::{AIConversation, AIMessage, AIProvider, MessageRole};
+use crate::reception::core;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::convert::{From, Into};
 use std::error::Error;
+
+const DEFAULT_SYSTEM_MSG: &str = "You are a helpful assistant.";
 
 // Chat请求返回结果
 // 示例
@@ -29,7 +31,7 @@ use std::error::Error;
 //     ]
 // }
 #[derive(Deserialize)]
-struct ChatResponse {
+struct Response {
     #[allow(dead_code)]
     id: String,
     #[allow(dead_code)]
@@ -38,12 +40,12 @@ struct ChatResponse {
     created: usize,
     #[allow(dead_code)]
     model: String,
-    usage: ApiUsage,
-    choices: Vec<ChatResult>,
+    usage: Usage,
+    choices: Vec<Choices>,
 }
 
 #[derive(Deserialize)]
-struct ApiUsage {
+struct Usage {
     prompt_tokens: usize,
     completion_tokens: usize,
     #[allow(dead_code)]
@@ -51,42 +53,17 @@ struct ApiUsage {
 }
 
 #[derive(Deserialize)]
-pub struct ChatResult {
-    message: ChatMessage,
+pub struct Choices {
+    message: Message,
     #[allow(dead_code)]
     finish_reason: String,
     #[allow(dead_code)]
     index: usize,
 }
 
-// 会话记录中的每一条消息
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub struct ChatMessage {
-    role: ChatRole,
-    content: String,
-}
-
-impl ChatMessage {
-    pub fn new(role: ChatRole, content: String) -> Self {
-        Self { role, content }
-    }
-}
-
-impl<T> From<T> for ChatMessage
-where
-    T: AIMessage,
-{
-    fn from(value: T) -> Self {
-        Self {
-            role: value.role().into(),
-            content: value.content().to_string(),
-        }
-    }
-}
-
 // 消息角色枚举。来自OpenAI的定义
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub enum ChatRole {
+pub enum Role {
     #[serde(rename = "system")]
     System,
     #[serde(rename = "user")]
@@ -99,36 +76,99 @@ pub enum ChatRole {
     Function,
 }
 
-impl From<ChatRole> for MessageRole {
-    fn from(value: ChatRole) -> Self {
+impl From<&Role> for core::MessageRole {
+    fn from(value: &Role) -> Self {
         match value {
-            ChatRole::Assistant => MessageRole::Assistant,
-            ChatRole::System => MessageRole::System,
-            ChatRole::User => MessageRole::User,
-            _ => MessageRole::Supplementary,
+            Role::Assistant => core::MessageRole::Assistant,
+            Role::System => core::MessageRole::System,
+            Role::User => core::MessageRole::User,
+            _ => core::MessageRole::Supplementary,
         }
     }
 }
 
-impl From<MessageRole> for ChatRole {
-    fn from(value: MessageRole) -> Self {
+impl From<Role> for core::MessageRole {
+    fn from(value: Role) -> Self {
+        value.into()
+    }
+}
+
+impl From<&core::MessageRole> for Role {
+    fn from(value: &core::MessageRole) -> Self {
         match value {
-            MessageRole::Assistant => ChatRole::Assistant,
-            MessageRole::System => ChatRole::System,
-            MessageRole::User => ChatRole::User,
-            MessageRole::Supplementary => ChatRole::Tool,
+            core::MessageRole::Assistant => Role::Assistant,
+            core::MessageRole::System => Role::System,
+            core::MessageRole::User => Role::User,
+            core::MessageRole::Supplementary => Role::Assistant, // 暂定，对用户影响最小
         }
     }
 }
 
-// 消息结构体，包含成本模型
-struct ChargeableMsg {
+impl From<core::MessageRole> for Role {
+    fn from(value: core::MessageRole) -> Self {
+        value.into()
+    }
+}
+
+// 会话记录中的每一条消息
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct Message {
+    role: Role,
+    content: String,
+}
+
+// 消息类型转换
+impl From<&core::Message> for Message {
+    fn from(value: &core::Message) -> Self {
+        Self {
+            role: value.role.clone().into(),
+            content: value.content.clone(),
+        }
+    }
+}
+
+impl From<core::Message> for Message {
+    fn from(value: core::Message) -> Self {
+        value.into()
+    }
+}
+
+// 会话记录
+// 发送给OpenAI的会话需要满足本格式要求
+//   "messages": [
+//     {"role": "system",
+//       "content": "You are a helpful assistant."},
+//     {"role": "user",
+//       "content": "Does Azure OpenAI support customer managed keys?"},
+//     {"role": "assistant",
+//       "content": "Yes, customer managed keys are supported by Azure OpenAI."},
+//     {"role": "user",
+//       "content": "Do other Azure AI services support this too?"}
+//   ]
+#[derive(Serialize)]
+pub struct Conversation {
+    messages: Vec<Message>, // 注意名字要与Json格式匹配
+}
+
+impl From<&core::Conversation> for Conversation {
+    fn from(value: &core::Conversation) -> Self {
+        let mut messages = Vec::<Message>::new();
+        for msg in value.content.iter() {
+            messages.push(Message::from(msg));
+        }
+
+        Self { messages }
+    }
+}
+
+// AI回复结构体，包含成本信息
+struct OaiResponse {
     pub prompt_token_price: f64,
     pub completion_token_price: f64,
-    pub response: ChatResponse,
+    pub response: Response,
 }
 
-impl AIMessage for ChargeableMsg {
+impl core::ChatResponse for OaiResponse {
     fn content(&self) -> &str {
         match self.response.choices.get(0) {
             Some(r) => &r.message.content,
@@ -136,10 +176,10 @@ impl AIMessage for ChargeableMsg {
         }
     }
 
-    fn role(&self) -> MessageRole {
+    fn role(&self) -> core::MessageRole {
         match self.response.choices.get(0) {
-            Some(r) => r.message.role.into(),
-            None => MessageRole::Supplementary,
+            Some(r) => (&r.message.role).into(),
+            None => core::MessageRole::Supplementary,
         }
     }
 
@@ -148,56 +188,9 @@ impl AIMessage for ChargeableMsg {
             + (self.completion_token_price * self.response.usage.completion_tokens as f64))
             / 1000.0
     }
-}
 
-// 会话记录
-// 示例
-// {
-//     "messages":[
-//        {
-//           "role":"system",
-//           "content":"You are a helpful assistant."
-//        },
-//        {
-//           "role":"user",
-//           "content":"Does Azure OpenAI support customer managed keys?"
-//        },
-//        {
-//           "role":"assistant",
-//           "content":"Yes, customer managed keys are supported by Azure OpenAI."
-//        },
-//        {
-//           "role":"user",
-//           "content":"Do other Azure AI services support this too?"
-//        }
-//     ]
-// }
-#[derive(Serialize)]
-pub struct ChatConversation {
-    messages: Vec<ChatMessage>,
-}
-
-impl<T> From<T> for ChatConversation
-where
-    T: AIConversation,
-{
-    fn from(value: T) -> Self {
-        let mut messages = Vec::<ChatMessage>::new();
-
-        // 首条消息应当为系统消息
-        let mut msg_iter = value.messages().iter();
-        let sys_msg = match value.messages().len() {
-            n if n > 0 => &msg_iter.next().unwrap().content(),
-            _ => "You are a helpful assistant.",
-        };
-        messages.push(ChatMessage::new(ChatRole::System, sys_msg.to_owned()));
-
-        // 追加剩余消息
-        for msg in msg_iter {
-            messages.push(ChatMessage::from(**msg));
-        }
-
-        Self { messages }
+    fn tokens(&self) -> usize {
+        self.response.usage.total_tokens
     }
 }
 
@@ -226,11 +219,44 @@ impl Agent {
     }
 }
 
-impl AIProvider for Agent {
-    async fn chat<T>(&self, conversation: T) -> Result<impl AIMessage, Box<dyn Error + Send + Sync>>
-    where
-        T: Into<ChatConversation> + Serialize,
-    {
+impl core::Chat for Agent {
+    // 根据会话内容，返回最新消息。
+    async fn chat(
+        &self,
+        conversation: &core::Conversation,
+    ) -> Result<impl core::ChatResponse, Box<dyn Error + Send + Sync>> {
+        let mut conv = conversation.clone();
+
+        // System Message完整？
+        if conv
+            .content
+            .first()
+            .is_some_and(|m| m.role != core::MessageRole::System)
+        {
+            conv.content.insert(
+                0,
+                core::Message {
+                    content: DEFAULT_SYSTEM_MSG.to_owned(),
+                    role: core::MessageRole::System,
+                    cost: 0.0,
+                    tokens: 0,
+                },
+            );
+        }
+
+        // 会话超长？移除第一条非系统消息直到满足要求。注意长度不要越界。
+        if let Some(latest) = conv.content.last() {
+            let mut current_tokens = latest.tokens;
+            while current_tokens > (self.deployment.max_tokens as f64 * 0.9) as usize
+                && conv.content.len() >= 2
+            {
+                current_tokens -= conv.content.get(1).unwrap().tokens;
+                conv.content.remove(1);
+            }
+        }
+
+        // 交由AI处理
+        let oai_conv: Conversation = (&conv).into();
         let header = {
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -239,18 +265,17 @@ impl AIProvider for Agent {
             );
             headers
         };
-
         let response = self
             .client
             .post(&self.deployment.endpoint)
-            .json(&conversation)
+            .json(&oai_conv)
             .headers(header)
             .send()
             .await?
-            .json::<ChatResponse>()
+            .json::<Response>()
             .await?;
 
-        Ok(ChargeableMsg {
+        Ok(OaiResponse {
             prompt_token_price: self.deployment.prompt_token_price,
             completion_token_price: self.deployment.completion_token_price,
             response,

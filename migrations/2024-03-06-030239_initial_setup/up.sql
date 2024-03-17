@@ -56,6 +56,5 @@ CREATE TABLE messages (
     cost DOUBLE NOT NULL,
     message_type INTEGER NOT NULL REFERENCES msg_types(id),
     content_type INTEGER NOT NULL REFERENCES content_types(id),
-    prompt_tokens INTEGER NOT NULL,
-    completion_tokens INTEGER NOT NULL,
+    tokens INTEGER NOT NULL
 );

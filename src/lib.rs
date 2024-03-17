@@ -25,18 +25,16 @@ pub fn app(
     secret: &str,
     oai_endpoint: &str,
     oai_key: &str,
-    db_path: &str,
 ) -> Router {
     // 初始化APP agent。
-    let db_path = std::path::Path::new(db_path);
     let app_agent = match Agent::new(
         app_token,
         b64encoded_aes_key,
         corp_id,
         secret,
+        1,
         oai_endpoint,
         oai_key,
-        db_path,
     ) {
         Ok(agent) => agent,
         Err(e) => panic!("初始化应用错误：{e}"),

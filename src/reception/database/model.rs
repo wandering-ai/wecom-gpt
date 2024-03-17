@@ -1,8 +1,6 @@
 use super::schema;
-use crate::reception::core::{AIConversation, AIMessage, MessageRole};
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
-use std::convert::From;
 
 // 数据库初始化状态
 #[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
@@ -34,6 +32,7 @@ pub struct NewGuest<'a> {
     pub credit: f64,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub admin: bool,
 }
 
 // Provider为AI供应商
@@ -56,21 +55,6 @@ pub struct Provider {
 pub struct MessageType {
     pub id: i32,
     pub name: String,
-}
-
-impl From<MessageRole> for MessageType {
-    fn from(value: MessageRole) -> Self {
-        let (id, name) = match value {
-            MessageRole::System => (1, "system"),
-            MessageRole::User => (2, "user"),
-            MessageRole::Assistant => (3, "assistant"),
-            MessageRole::Supplementary => (4, "supplementary"),
-        };
-        Self {
-            id,
-            name: name.to_string(),
-        }
-    }
 }
 
 // 消息内容类型
@@ -131,27 +115,7 @@ pub struct Message {
     pub cost: f64,
     pub message_type: i32,
     pub content_type: i32,
-    pub prompt_tokens: i32,
-    pub completion_tokens: i32,
-}
-
-impl AIMessage for Message {
-    fn content(&self) -> &str {
-        &self.content
-    }
-
-    fn role(&self) -> MessageRole {
-        match self.message_type {
-            1 => MessageRole::System,
-            2 => MessageRole::User,
-            3 => MessageRole::Assistant,
-            _ => MessageRole::Supplementary,
-        }
-    }
-
-    fn cost(&self) -> f64 {
-        0.0
-    }
+    pub tokens: i32,
 }
 
 // 用于插入表的新消息
@@ -165,6 +129,5 @@ pub struct NewMessage {
     pub cost: f64,
     pub message_type: i32,
     pub content_type: i32,
-    pub prompt_tokens: i32,
-    pub completion_tokens: i32,
+    pub tokens: i32,
 }

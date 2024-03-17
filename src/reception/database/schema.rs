@@ -54,9 +54,7 @@ diesel::table! {
         cost -> Double,
         message_type -> Integer,
         content_type -> Integer,
-        prompt_tokens -> Integer,
-        completion_tokens -> Integer,
-        meta -> Text,
+        tokens -> Integer,
     }
 }
 
