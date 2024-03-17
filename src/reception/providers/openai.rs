@@ -2,8 +2,9 @@
 use crate::reception::core;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::convert::{From, Into};
+use std::convert::{From, TryFrom};
 use std::error::Error;
+use std::string::ToString;
 
 const DEFAULT_SYSTEM_MSG: &str = "You are a helpful assistant.";
 
@@ -89,7 +90,7 @@ impl From<&Role> for core::MessageRole {
 
 impl From<Role> for core::MessageRole {
     fn from(value: Role) -> Self {
-        value.into()
+        (&value).into()
     }
 }
 
@@ -106,14 +107,40 @@ impl From<&core::MessageRole> for Role {
 
 impl From<core::MessageRole> for Role {
     fn from(value: core::MessageRole) -> Self {
-        value.into()
+        (&value).into()
+    }
+}
+
+impl TryFrom<&str> for Role {
+    type Error = &'static str;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "system" => Ok(Role::System),
+            "user" => Ok(Role::User),
+            "assistant" => Ok(Role::Assistant),
+            "tool" => Ok(Role::Tool),
+            "function" => Ok(Role::Function),
+            &_ => Err("Unknown chat role"),
+        }
+    }
+}
+
+impl ToString for Role {
+    fn to_string(&self) -> String {
+        match self {
+            Role::System => "system".to_string(),
+            Role::User => "user".to_string(),
+            Role::Assistant => "assistant".to_string(),
+            Role::Tool => "tool".to_string(),
+            Role::Function => "function".to_string(),
+        }
     }
 }
 
 // 会话记录中的每一条消息
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Message {
-    role: Role,
+    role: String,
     content: String,
 }
 
@@ -121,7 +148,7 @@ pub struct Message {
 impl From<&core::Message> for Message {
     fn from(value: &core::Message) -> Self {
         Self {
-            role: value.role.clone().into(),
+            role: Role::from(&value.role).to_string(),
             content: value.content.clone(),
         }
     }
@@ -147,7 +174,7 @@ impl From<core::Message> for Message {
 //   ]
 #[derive(Serialize)]
 pub struct Conversation {
-    messages: Vec<Message>, // 注意名字要与Json格式匹配
+    pub messages: Vec<Message>, // 注意名字要与Json格式匹配
 }
 
 impl From<&core::Conversation> for Conversation {
@@ -170,6 +197,7 @@ struct OaiResponse {
 
 impl core::ChatResponse for OaiResponse {
     fn content(&self) -> &str {
+        tracing::debug!("Returning content..");
         match self.response.choices.get(0) {
             Some(r) => &r.message.content,
             None => "",
@@ -177,19 +205,22 @@ impl core::ChatResponse for OaiResponse {
     }
 
     fn role(&self) -> core::MessageRole {
+        tracing::debug!("Returning message role..");
         match self.response.choices.get(0) {
-            Some(r) => (&r.message.role).into(),
+            Some(_) => core::MessageRole::from(Role::Assistant), // HARDCODE, to be fixed
             None => core::MessageRole::Supplementary,
         }
     }
 
     fn cost(&self) -> f64 {
+        tracing::debug!("Returning cost..");
         ((self.prompt_token_price * self.response.usage.prompt_tokens as f64)
             + (self.completion_token_price * self.response.usage.completion_tokens as f64))
             / 1000.0
     }
 
     fn tokens(&self) -> usize {
+        tracing::debug!("Returning tokens..");
         self.response.usage.total_tokens
     }
 }
@@ -225,7 +256,7 @@ impl core::Chat for Agent {
         &self,
         conversation: &core::Conversation,
     ) -> Result<impl core::ChatResponse, Box<dyn Error + Send + Sync>> {
-        let mut conv = conversation.clone();
+        let mut conv: core::Conversation = conversation.clone();
 
         // System Message完整？
         if conv
@@ -242,21 +273,28 @@ impl core::Chat for Agent {
                     tokens: 0,
                 },
             );
+            tracing::warn!("System message not found, default used.")
         }
 
         // 会话超长？移除第一条非系统消息直到满足要求。注意长度不要越界。
-        if let Some(latest) = conv.content.last() {
-            let mut current_tokens = latest.tokens;
-            while current_tokens > (self.deployment.max_tokens as f64 * 0.9) as usize
-                && conv.content.len() >= 2
+        if conv.content.len() >= 3 {
+            let mut current_tokens = conv.content.last().unwrap().tokens;
+            while current_tokens > ((self.deployment.max_tokens as f64 * 0.9) as usize)
+                && conv.content.len() > 2
             {
                 current_tokens -= conv.content.get(1).unwrap().tokens;
                 conv.content.remove(1);
+                tracing::warn!("Previous message dropped to match the content window limit");
             }
         }
+        tracing::debug!("Content window limit check passed");
 
         // 交由AI处理
+        tracing::debug!("Transforming conversation..");
         let oai_conv: Conversation = (&conv).into();
+        tracing::debug!("Transformed. Message count: {}", oai_conv.messages.len());
+
+        tracing::debug!("Ask AI for response..");
         let header = {
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -274,11 +312,63 @@ impl core::Chat for Agent {
             .await?
             .json::<Response>()
             .await?;
+        tracing::debug!("Got AI response");
 
         Ok(OaiResponse {
             prompt_token_price: self.deployment.prompt_token_price,
             completion_token_price: self.deployment.completion_token_price,
             response,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_role_to_core_role() {
+        use super::core::MessageRole;
+        use super::Role;
+        use std::iter::zip;
+
+        let roles = [
+            Role::System,
+            Role::User,
+            Role::Assistant,
+            Role::Function,
+            Role::Tool,
+        ];
+
+        let core_roles = [
+            MessageRole::System,
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::Supplementary,
+            MessageRole::Supplementary,
+        ];
+
+        for (a, b) in zip(roles, core_roles) {
+            assert_eq!(b, MessageRole::from(a));
+        }
+    }
+
+    #[test]
+    fn test_role_from_core_role() {
+        use super::core::MessageRole;
+        use super::Role;
+        use std::iter::zip;
+
+        let roles = [Role::System, Role::User, Role::Assistant, Role::Assistant];
+
+        let core_roles = [
+            MessageRole::System,
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::Supplementary,
+        ];
+
+        for (a, b) in zip(roles, core_roles) {
+            assert_eq!(a, Role::from(b));
+        }
     }
 }
