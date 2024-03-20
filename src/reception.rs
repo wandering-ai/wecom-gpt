@@ -413,7 +413,7 @@ impl Agent {
         instruction: &str,
     ) -> String {
         // 指令角色？
-        if guest.admin {
+        if guest.admin && instruction.starts_with('$') {
             let msg = instruction.trim_matches('$');
             let args: Vec<&str> = msg.split(' ').collect();
 
