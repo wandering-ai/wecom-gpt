@@ -35,48 +35,6 @@ pub struct NewGuest<'a> {
     pub admin: bool,
 }
 
-// Provider为AI供应商
-#[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
-#[diesel(table_name = schema::providers)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
-pub struct Provider {
-    pub id: i32,
-    pub name: String,
-    pub endpoint: String,
-    pub max_tokens: i32,
-    pub prompt_token_price: f64,
-    pub completion_token_price: f64,
-}
-
-// 消息角色
-#[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
-#[diesel(table_name = schema::msg_types)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
-pub struct MessageType {
-    pub id: i32,
-    pub name: String,
-}
-
-// 消息内容类型
-#[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
-#[diesel(table_name = schema::content_types)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
-pub struct ContentType {
-    pub id: i32,
-    pub name: String,
-}
-
-// Assistant为AI助手
-#[derive(Queryable, Selectable, Identifiable, PartialEq, Debug)]
-#[diesel(table_name = schema::assistants)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
-pub struct Assistant {
-    pub id: i32,
-    pub name: String,
-    pub agent_id: i32,
-    pub provider_id: i32,
-}
-
 // 会话记录
 #[derive(Queryable, Selectable, Identifiable, Associations, PartialEq, Debug)]
 #[diesel(table_name = schema::conversations)]
@@ -115,7 +73,8 @@ pub struct Message {
     pub cost: f64,
     pub message_type: i32,
     pub content_type: i32,
-    pub tokens: i32,
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
 }
 
 // 用于插入表的新消息
@@ -129,5 +88,6 @@ pub struct NewMessage {
     pub cost: f64,
     pub message_type: i32,
     pub content_type: i32,
-    pub tokens: i32,
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
 }

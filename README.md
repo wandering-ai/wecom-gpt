@@ -7,15 +7,8 @@ use wecom_gpt::app;
 
 #[tokio::main]
 async fn main() {
-    let service = app(
-        app_token,
-        b64_encoded_aes_key,
-        corp_id,
-        corp_secret,
-        azure_openai_endpoint,
-        azure_openai_api_key,
-        database_url,
-    );
+    // Init the service
+    let service = app("/etc/zoo/zoo.cfg"));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8088").await.unwrap();
     axum::serve(listener, service).await.unwrap();
 }
