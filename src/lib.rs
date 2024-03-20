@@ -36,8 +36,10 @@ pub fn app(config: &Config) -> Router {
     let state = Arc::new(AppState { app_agent });
 
     Router::new()
-        .route("/verify/agent/:agent_id", post(user_msg_handler))
-        .route("/chat/agent/:agent_id", get(server_verification_handler))
+        .route(
+            "/agent/:agent_id",
+            get(server_verification_handler).post(user_msg_handler),
+        )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
