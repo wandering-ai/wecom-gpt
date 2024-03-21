@@ -34,6 +34,7 @@ pub struct Config {
     pub name: String,
     pub token: String,
     pub key: String,
+    pub secret: String,
     pub prompt: String,
     pub provider_id: u64,
 }

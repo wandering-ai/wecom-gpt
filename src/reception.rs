@@ -113,80 +113,65 @@ pub struct Config {
 #[derive(Deserialize, Clone)]
 pub struct WecomCfg {
     corp_id: String,
-    corp_secret: String,
 }
 
 /// Agent负责协调用户与AI之间的交互过程
 pub struct Agent {
     assistants: HashMap<u64, Assistant>,      // 负责AI功能
     crypto_agents: HashMap<u64, CryptoAgent>, // 负责企业微信消息加解密
-    messenger: WecomAgent,                    // 负责消息传递
+    messengers: HashMap<u64, WecomAgent>,     // 负责消息传递
     accountant: Accountant,                   // 负责账户管理
+}
+
+// 转换环境变量解析错误
+fn to_local_err(name: &str) -> Error {
+    Error(format!("找不到环境变量{name}"))
 }
 
 impl Agent {
     /// 新建一个应用Agent
-    pub fn new(config: &mut Config) -> Result<Self, Error> {
+    pub fn new(config: &Config) -> Result<Self, Error> {
         // 初始化存储模块
-        let admin_name = env::var(&config.admin_account)
-            .map_err(|_| Error(format!("{} should be set", config.admin_account)))?;
+        let admin_name =
+            env::var(&config.admin_account).map_err(|_| to_local_err(&config.admin_account))?;
         let storage = Arc::new(
             StorageAgent::new(&config.storage_path, admin_name.as_str())
                 .map_err(|e| Error(format!("数据库初始化失败。{e}")))?,
         );
 
-        // 初始化全部Assistant
+        // 初始化Assistant、加解密与消息模块
         let mut crypto_agents: HashMap<u64, CryptoAgent> = HashMap::new();
         let mut assistants: HashMap<u64, Assistant> = HashMap::new();
+        let mut messengers: HashMap<u64, WecomAgent> = HashMap::new();
 
-        for assis_cfg in &mut config.assistants {
+        for assis_cfg in &config.assistants {
+            let mut a_cfg = assis_cfg.clone();
             // 加解密模块
-            assis_cfg.token = env::var(&assis_cfg.token).map_err(|_| {
-                Error(format!(
-                    "{} should be set for {}",
-                    assis_cfg.token, assis_cfg.name
-                ))
-            })?;
-            assis_cfg.key = env::var(&assis_cfg.key).map_err(|_| {
-                Error(format!(
-                    "{} should be set for {}",
-                    assis_cfg.key, assis_cfg.name
-                ))
-            })?;
-            crypto_agents.insert(
-                assis_cfg.agent_id,
-                CryptoAgent::new(&assis_cfg.token, &assis_cfg.key),
-            );
+            a_cfg.token = env::var(&assis_cfg.token).map_err(|_| to_local_err(&assis_cfg.token))?;
+            a_cfg.key = env::var(&assis_cfg.key).map_err(|_| to_local_err(&assis_cfg.key))?;
+            crypto_agents.insert(a_cfg.agent_id, CryptoAgent::new(&a_cfg.token, &a_cfg.key));
+
+            // 消息发送模块
+            let corp_id =
+                env::var(&config.wecom.corp_id).map_err(|_| to_local_err(&config.wecom.corp_id))?;
+            a_cfg.secret = env::var(&a_cfg.secret).map_err(|_| to_local_err(&a_cfg.secret))?;
+            messengers.insert(a_cfg.agent_id, WecomAgent::new(&corp_id, &a_cfg.secret));
 
             // 匹配的AI是哪一个
-            for provider_cfg in &mut config.providers {
+            for provider_cfg in &config.providers {
                 if provider_cfg.id == assis_cfg.provider_id {
-                    provider_cfg.endpoint = env::var(&provider_cfg.endpoint).map_err(|_| {
-                        Error(format!(
-                            "{} should be set for {}",
-                            provider_cfg.endpoint, provider_cfg.name
-                        ))
-                    })?;
-                    provider_cfg.api_key = env::var("AZURE_OPENAI_API_KEY").map_err(|_| {
-                        Error(format!(
-                            "AZURE_OPENAI_API_KEY should be set for {}",
-                            provider_cfg.name
-                        ))
-                    })?;
+                    let mut p_cfg = provider_cfg.clone();
+                    p_cfg.endpoint =
+                        env::var(&p_cfg.endpoint).map_err(|_| to_local_err(&p_cfg.endpoint))?;
+                    p_cfg.api_key =
+                        env::var(&p_cfg.api_key).map_err(|_| to_local_err(&p_cfg.api_key))?;
                     assistants.insert(
-                        assis_cfg.agent_id,
-                        Assistant::new(assis_cfg, provider_cfg, storage.clone()),
+                        a_cfg.agent_id,
+                        Assistant::new(&a_cfg, &p_cfg, storage.clone()),
                     );
                 }
             }
         }
-
-        // 企业微信消息发送
-        let corp_id = env::var(&config.wecom.corp_id)
-            .map_err(|_| Error(format!("{} should be set", config.wecom.corp_id)))?;
-        let secret = env::var(&config.wecom.corp_secret)
-            .map_err(|_| Error(format!("{} should be set", config.wecom.corp_secret)))?;
-        let messenger = WecomAgent::new(&corp_id, &secret);
 
         // 账户管理模块
         let accountant = Accountant::new(storage.clone());
@@ -194,7 +179,7 @@ impl Agent {
         Ok(Self {
             assistants,
             crypto_agents,
-            messenger,
+            messengers,
             accountant,
         })
     }
@@ -334,9 +319,9 @@ impl Agent {
         };
 
         // 扣除相应金额
-        let guest_to_update = &mut guest.clone();
+        let mut guest_to_update = guest.clone();
         guest_to_update.credit -= reply_msg.cost();
-        if let Err(e) = self.accountant.update_guest(guest_to_update) {
+        if let Err(e) = self.accountant.update_guest(&guest_to_update) {
             tracing::error!("更新用户账户失败：{}, {e}", guest.name);
             return;
         }
@@ -358,20 +343,23 @@ impl Agent {
     where
         T: Serialize + WecomMessage,
     {
+        let agent_id = received_msg
+            .agent_id
+            .parse::<u64>()
+            .expect("Agent ID should be u64");
         let msg = WecomMsgBuilder::default()
             .to_users(vec![&received_msg.from_user_name])
-            .from_agent(
-                received_msg
-                    .agent_id
-                    .parse::<usize>()
-                    .expect("Agent ID should be u64"),
-            )
+            .from_agent(agent_id as usize)
             .build(content)
             .expect("Massage should be built");
 
         // 发送该消息
         tracing::debug!("Sending message to {} ...", received_msg.from_user_name);
-        let response = self.messenger.send(msg).await;
+        let Some(messenger) = self.messengers.get(&agent_id) else {
+            tracing::error!("传信者不存在。终止当前操作。agent_id: {agent_id}");
+            return Err(Box::new(Error(format!("找不到messenger: {agent_id}"))));
+        };
+        let response = messenger.send(msg).await;
         if let Err(e) = response {
             tracing::debug!("Error sending msg: {e}");
             return Err(Box::new(Error(format!("Error sending msg: {e}"))));
