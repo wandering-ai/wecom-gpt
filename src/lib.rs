@@ -4,6 +4,7 @@ mod core;
 mod provider;
 mod reception;
 mod storage;
+mod wecom_api;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -14,8 +15,9 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
 // 统筹全部逻辑的应用Agent
+use reception::Agent;
 pub use reception::Config;
-use reception::{Agent, UrlVerifyParams, UserMsgParams};
+use wecom_api::{AppMessageParams, UrlVerifyParams};
 
 // Shared state used in all routers
 type SharedState = Arc<AppState>;
@@ -26,8 +28,8 @@ struct AppState {
 
 pub fn app(config: &Config) -> Router {
     // 初始化APP agent。
-    let mut cfg: Config = config.clone();
-    let app_agent = match Agent::new(&mut cfg) {
+    let cfg: Config = config.clone();
+    let app_agent = match Agent::new(&cfg) {
         Err(e) => panic!("初始化应用错误：{e}"),
         Ok(agent) => agent,
     };
@@ -59,7 +61,7 @@ async fn server_verification_handler(
 async fn user_msg_handler(
     Path(agent_id): Path<u64>,
     State(state): State<SharedState>,
-    params: Query<UserMsgParams>,
+    params: Query<AppMessageParams>,
     body: String,
 ) -> StatusCode {
     tracing::debug!("Got user message.");

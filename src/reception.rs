@@ -11,10 +11,15 @@ use std::sync::Arc;
 // 企业微信加解密模块
 use wecom_crypto::Agent as CryptoAgent;
 
-// 企业微信消息模块
+// 企业微信消息发送模块
 use wecom_agent::{
     message::{MessageBuilder as WecomMsgBuilder, Text as WecomText, WecomMessage},
     WecomAgent,
+};
+
+// 企业微信服务端业务解析模块
+use super::wecom_api::{
+    AppMessageContent, AppMessageParams, AppMessageRequestBody, UrlVerifyParams,
 };
 
 // 用户管理模块
@@ -37,67 +42,6 @@ impl fmt::Display for Error {
     }
 }
 impl std::error::Error for Error {}
-
-/// 服务器可用性验证请求涉及到的参数
-#[derive(Deserialize)]
-pub struct UrlVerifyParams {
-    msg_signature: String,
-    timestamp: String,
-    nonce: String,
-    echostr: String,
-}
-
-/// 用户主动发送来的请求涉及到的参数
-#[derive(Deserialize)]
-pub struct UserMsgParams {
-    msg_signature: String,
-    nonce: String,
-    timestamp: String,
-}
-
-// 请求Body结构体
-// <xml>
-//   <ToUserName><![CDATA[toUser]]></ToUserName>
-//   <AgentID><![CDATA[toAgentID]]></AgentID>
-//   <Encrypt><![CDATA[msg_encrypt]]></Encrypt>
-// </xml>
-#[derive(Debug, Deserialize, PartialEq)]
-struct RequestBody {
-    #[serde(rename = "ToUserName")]
-    to_user_name: String,
-    #[serde(rename = "AgentID")]
-    agent_id: String,
-    #[serde(rename = "Encrypt")]
-    encrypted_str: String,
-}
-
-// 存储用户所发送消息的结构体
-// <xml>
-//   <ToUserName><![CDATA[ww637951f75e40d82b]]></ToUserName>
-//   <FromUserName><![CDATA[YinGuoBing]]></FromUserName>
-//   <CreateTime>1708218294</CreateTime>
-//   <MsgType><![CDATA[text]]></MsgType>
-//   <Content><![CDATA[[呲牙]]]></Content>
-//   <MsgId>7336741709953816625</MsgId>
-//   <AgentID>1000002</AgentID>
-// </xml>
-#[derive(Debug, Deserialize, PartialEq)]
-struct ReceivedMsg {
-    #[serde(rename = "ToUserName")]
-    to_user_name: String,
-    #[serde(rename = "FromUserName")]
-    from_user_name: String,
-    #[serde(rename = "CreateTime")]
-    create_time: u64,
-    #[serde(rename = "MsgType")]
-    msg_type: String,
-    #[serde(rename = "Content")]
-    content: String,
-    #[serde(rename = "MsgId")]
-    msg_id: String,
-    #[serde(rename = "AgentID")]
-    agent_id: String,
-}
 
 // 初始化应用所需要的配置项。这些配置项内容将从配置文件中读取。
 #[derive(Deserialize, Clone)]
@@ -200,7 +144,7 @@ impl Agent {
         if crypto_agent.generate_signature(vec![&params.timestamp, &params.nonce, &params.echostr])
             != params.msg_signature
         {
-            tracing::error!("Error! Code: {}", StatusCode::BAD_REQUEST);
+            tracing::error!("校验签名失败");
             return Err(StatusCode::BAD_REQUEST);
         }
 
@@ -208,7 +152,7 @@ impl Agent {
         match crypto_agent.decrypt(&params.echostr) {
             Ok(t) => Ok(t.text),
             Err(e) => {
-                tracing::error!("Error in decrypting: {}", e);
+                tracing::error!("解密消息失败。{e}");
                 Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         }
@@ -219,100 +163,110 @@ impl Agent {
     pub async fn handle_user_request(
         &self,
         agent_id: u64,
-        params: Query<UserMsgParams>,
+        params: Query<AppMessageParams>,
         body: String,
     ) {
-        // Extract the request body
-        let body: RequestBody = from_str(&body).unwrap();
+        // 获取请求Body结构体
+        let body: AppMessageRequestBody = match from_str(&body) {
+            Err(e) => {
+                tracing::error!("[{agent_id}] 解析Body出错。终止当前操作。{e}");
+                return;
+            }
+            Ok(b) => b,
+        };
 
-        // 验证对象是谁？
+        // 谁可以校验此请求？
         let Some(crypto_agent) = self.crypto_agents.get(&agent_id) else {
-            tracing::error!("加解密代理不存在。终止当前操作。agent_id: {agent_id}");
+            tracing::error!("[{agent_id}] 加解密代理不存在。终止当前操作。");
             return;
         };
 
-        // Is this request safe?
+        // 消息被篡改？
         if crypto_agent.generate_signature(vec![
             &params.timestamp,
             &params.nonce,
             &body.encrypted_str,
         ]) != params.msg_signature
         {
-            tracing::error!("签名校验失败。数据可能被篡改。终止当前操作。");
+            tracing::error!("[{agent_id}] 签名校验失败。数据可能被篡改。终止当前操作。");
             return;
         }
 
-        // Decrypt the user message
-        let decrypt_result = crypto_agent.decrypt(&body.encrypted_str);
-        if let Err(e) = &decrypt_result {
-            tracing::error!("解密用户数据失败。终止当前操作。 {}", e);
-            return;
-        }
-
-        // Parse the xml document
-        let xml_doc = from_str::<ReceivedMsg>(&decrypt_result.unwrap().text);
-        if let Err(e) = &xml_doc {
-            tracing::error!("解析xml失败。终止当前操作。 {}", e);
-            return;
-        }
-        let received_msg: ReceivedMsg = xml_doc.expect("XML document should be valid.");
-
-        tracing::debug!("User message parsed");
-
-        // 首先验证消息发送者。若用户不存在，则尝试创建该用户。
-        let guest_name: &str = received_msg.from_user_name.as_str();
-        let verification = self.accountant.verify_guest(guest_name);
-        if let Err(AccountError::Internal(e)) = verification {
-            tracing::error!("验证用户失败。终止当前操作。{e}");
-            return;
-        }
-        if let Err(AccountError::NotFound) = verification {
-            tracing::warn!("用户不存在。将注册用户：{guest_name}");
-            let new_guest = Guest {
-                name: guest_name.to_owned(),
-                credit: 0.0,
-                admin: false,
-            };
-            if let Err(e) = self.accountant.register(&new_guest) {
-                tracing::error!("注册用户失败。终止当前操作。{e}");
+        // 加密的内容是什么？
+        let decrypt_result = match crypto_agent.decrypt(&body.encrypted_str) {
+            Err(e) => {
+                tracing::error!("[{agent_id}] 解密用户数据失败。终止当前操作。{e}");
                 return;
             }
-            tracing::info!("注册用户成功：{guest_name}");
-        }
+            Ok(x) => x,
+        };
+        let msg_content = match from_str::<AppMessageContent>(&decrypt_result.text) {
+            Err(e) => {
+                tracing::error!("[{agent_id}] 解析xml失败。终止当前操作。{e}");
+                return;
+            }
+            Ok(x) => x,
+        };
+        tracing::debug!("User message parsed");
+
+        // 首先验证消息发送者。若用户不存在，则尝试创建该用户。若用户逾期，则返回具体金额。
+        let guest_name: &str = body.to_user_name.as_str();
+        let overdue: f64 = match self.accountant.verify_guest(guest_name) {
+            Err(AccountError::Internal(e)) => {
+                tracing::error!("[{agent_id}] 验证用户失败。终止当前操作。{e}");
+                return;
+            }
+            Err(AccountError::Overdue(credit)) => credit,
+            Err(AccountError::NotFound) => {
+                tracing::warn!("[{agent_id}] 用户不存在。将注册用户：{guest_name}");
+                let new_guest = Guest {
+                    name: guest_name.to_owned(),
+                    credit: 0.0,
+                    admin: false,
+                };
+                if let Err(e) = self.accountant.register(&new_guest) {
+                    tracing::error!("[{agent_id}] 注册用户失败。终止当前操作。{e}");
+                    return;
+                }
+                tracing::info!("[{agent_id}] 注册用户成功：{guest_name}");
+                0.0
+            }
+            Ok(_) => 0.0,
+        };
         let Ok(guest) = self.accountant.get_guest(guest_name) else {
-            tracing::error!("获取用户失败。终止当前操作。");
+            tracing::error!("[{agent_id}] 获取用户失败。终止当前操作。");
             return;
         };
 
         // 是指令消息吗？指令消息需要无条件响应。
         // 管理员指令来自管理员(Guest::admin=true)，并且匹配管理员指令格式：$$指令内容$$
         // 用户指令来自普通用户(Guest::admin=false)，并且匹配用户指令格式：#指令内容
-        let msg_str = received_msg.content.as_str();
+        // 所有的指令操作均需要保留日志。
+        let msg_str = msg_content.content.as_str();
         if (msg_str.trim().starts_with("$$") && msg_str.trim().ends_with("$$"))
             || msg_str.starts_with('#')
         {
-            tracing::debug!("Got instruct message, going to handle it..");
-            let sys_msg = self.handle_instruction_msg(&guest, agent_id, &received_msg.content);
-            // 此过程出现的任何错误，均需要告知管理员。
-            self.reply_n_log(&sys_msg, &received_msg).await;
+            tracing::debug!("[{agent_id}] Got instruct message, going to handle it..");
+            let sys_msg = self.handle_instruction_msg(&guest, agent_id, &msg_content.content);
+            self.log_n_reply(&sys_msg, &msg_content).await;
             return;
         }
 
         // 用户是否可以使用本服务？
-        if let Err(AccountError::Overdue(credit)) = verification {
-            self.reply_n_log(&format!("账户余额不足。当前余额{credit}"), &received_msg)
+        if overdue <= 0.0 {
+            self.log_n_reply(&format!("账户余额不足。当前余额{overdue}"), &msg_content)
                 .await;
             return;
         }
 
         // 谁来处理常规用户消息？
         let Some(assistant) = self.assistants.get(&agent_id) else {
-            tracing::error!("助手不存在。终止当前操作。agent_id: {agent_id}");
+            tracing::error!("[{agent_id}] 助手不存在。终止当前操作。");
             return;
         };
-        let reply_msg = match assistant.chat(&guest, &received_msg.content).await {
+        let reply_msg = match assistant.chat(&guest, &msg_content.content).await {
             Err(e) => {
-                tracing::error!("获取AI回复失败。终止当前操作。agent_id: {agent_id}。{e}");
+                tracing::error!("[{agent_id}] 获取AI回复失败。终止当前操作。{e}");
                 return;
             }
             Ok(m) => m,
@@ -322,71 +276,66 @@ impl Agent {
         let mut guest_to_update = guest.clone();
         guest_to_update.credit -= reply_msg.cost();
         if let Err(e) = self.accountant.update_guest(&guest_to_update) {
-            tracing::error!("更新用户账户失败：{}, {e}", guest.name);
+            tracing::error!(
+                "[{agent_id}] 更新用户账户失败。终止当前操作。{}, {e}",
+                guest.name
+            );
             return;
         }
-        tracing::debug!("User {} charged {}", guest.name, reply_msg.cost());
+        tracing::debug!(
+            "[{agent_id}] User {} charged {}",
+            guest.name,
+            reply_msg.cost()
+        );
 
         // 回复给用户
         let content = WecomText::new(reply_msg.content().to_owned());
-        if let Err(e) = self.reply(content, &received_msg).await {
-            tracing::error!("回复用户消息失败。终止当前操作。agent_id: {agent_id}。{e}");
+        if let Err(e) = self.reply(content, &msg_content).await {
+            tracing::error!("[{agent_id}] 回复用户消息失败。{e}");
         }
     }
 
     // 向用户回复一条消息。消息内容content需要满足WecomMessage。
-    async fn reply<T>(
-        &self,
-        content: T,
-        received_msg: &ReceivedMsg,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    async fn reply<T>(&self, content: T, msg_content: &AppMessageContent) -> Result<(), Error>
     where
         T: Serialize + WecomMessage,
     {
-        let agent_id = received_msg
+        let agent_id = msg_content
             .agent_id
             .parse::<u64>()
-            .expect("Agent ID should be u64");
+            .map_err(|e| Error(format!("解析agent_id出错。{e}")))?;
         let msg = WecomMsgBuilder::default()
-            .to_users(vec![&received_msg.from_user_name])
+            .to_users(vec![&msg_content.from_user_name])
             .from_agent(agent_id as usize)
             .build(content)
-            .expect("Massage should be built");
+            .map_err(|e| Error(format!("构建微信消息时出错。{e}")))?;
 
         // 发送该消息
-        tracing::debug!("Sending message to {} ...", received_msg.from_user_name);
+        tracing::debug!("Sending message to {} ...", msg_content.from_user_name);
         let Some(messenger) = self.messengers.get(&agent_id) else {
-            tracing::error!("传信者不存在。终止当前操作。agent_id: {agent_id}");
-            return Err(Box::new(Error(format!("找不到messenger: {agent_id}"))));
+            return Err(Error(format!("找不到可用的消息代理。 {agent_id}")));
         };
-        let response = messenger.send(msg).await;
-        if let Err(e) = response {
-            tracing::debug!("Error sending msg: {e}");
-            return Err(Box::new(Error(format!("Error sending msg: {e}"))));
-        }
-        let response = response.expect("Response should be valid.");
+        let response = messenger
+            .send(msg)
+            .await
+            .map_err(|e| Error(format!("调用发送消息API失败。{e}")))?;
 
         // 发送成功，但是服务器返回错误。
         if response.is_error() {
-            tracing::debug!(
-                "Wecom API error: {} {}",
+            return Err(Error(format!(
+                "发送消息后收到异常信息。 {}, {}",
                 response.error_code(),
                 response.error_msg()
-            );
-            return Err(Box::new(Error(format!(
-                "Error sending msg: {}, {}",
-                response.error_code(),
-                response.error_msg()
-            ))));
+            )));
         }
         Ok(())
     }
 
-    // 回复消息。并将消息内容记录在日志中。
-    async fn reply_n_log(&self, msg: &str, received_msg: &ReceivedMsg) {
+    // 回复消息。并将消息内容记录在日志中。主要用在系统指令消息处理中。
+    async fn log_n_reply(&self, msg: &str, msg_content: &AppMessageContent) {
         tracing::info!(msg);
         let content = WecomText::new(msg.to_owned());
-        if let Err(e) = self.reply(content, received_msg).await {
+        if let Err(e) = self.reply(content, msg_content).await {
             tracing::error!("发送系统消息时出错。{e}");
         }
     }
