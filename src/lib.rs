@@ -17,7 +17,7 @@ use tower_http::trace::TraceLayer;
 // 统筹全部逻辑的应用Agent
 use reception::Agent;
 pub use reception::Config;
-use wecom_api::{AppMessageParams, UrlVerifyParams};
+use wecom_api::{CallbackParams, UrlVerifyParams};
 
 // Shared state used in all routers
 type SharedState = Arc<AppState>;
@@ -42,6 +42,10 @@ pub fn app(config: &Config) -> Router {
             "/agent/:agent_id",
             get(server_verification_handler).post(user_msg_handler),
         )
+        .route(
+            "/contact/:agent_id",
+            get(server_verification_handler).post(account_creation_handler),
+        )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
@@ -61,7 +65,7 @@ async fn server_verification_handler(
 async fn user_msg_handler(
     Path(agent_id): Path<u64>,
     State(state): State<SharedState>,
-    params: Query<AppMessageParams>,
+    params: Query<CallbackParams>,
     body: String,
 ) -> StatusCode {
     tracing::debug!("Got user message.");
@@ -72,6 +76,22 @@ async fn user_msg_handler(
             .app_agent
             .handle_user_request(agent_id, params, body)
             .await;
+    });
+
+    StatusCode::OK
+}
+
+// 响应通讯录新增成员
+async fn account_creation_handler(
+    State(state): State<SharedState>,
+    params: Query<CallbackParams>,
+    body: String,
+) -> StatusCode {
+    tracing::debug!("Got account creation event.");
+
+    // 微信服务器要求即时响应，故异步处理这条消息。
+    tokio::spawn(async move {
+        state.app_agent.handle_account_creation(params, body).await;
     });
 
     StatusCode::OK

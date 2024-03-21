@@ -18,12 +18,10 @@ use wecom_agent::{
 };
 
 // 企业微信服务端业务解析模块
-use super::wecom_api::{
-    AppMessageContent, AppMessageParams, AppMessageRequestBody, UrlVerifyParams,
-};
+use super::wecom_api::{AppMessageContent, CallbackParams, CallbackRequestBody, UrlVerifyParams};
 
 // 用户管理模块
-use super::accountant::{Accountant, Error as AccountError};
+use super::accountant::{Accountant, Config as AccountantCfg, Error as AccountError};
 
 // 人工智能模块
 use super::assistant::{Assistant, Config as AssistantCfg, ProviderCfg};
@@ -49,6 +47,7 @@ pub struct Config {
     wecom: WecomCfg,
     providers: Vec<ProviderCfg>,
     assistants: Vec<AssistantCfg>,
+    accountant: AccountantCfg,
     storage_path: String,
     admin_account: String,
 }
@@ -118,7 +117,10 @@ impl Agent {
         }
 
         // 账户管理模块
-        let accountant = Accountant::new(storage.clone());
+        let mut acct_cfg = config.accountant.clone();
+        acct_cfg.token = env::var(&acct_cfg.token).map_err(|_| to_local_err(&acct_cfg.token))?;
+        acct_cfg.key = env::var(&acct_cfg.key).map_err(|_| to_local_err(&acct_cfg.key))?;
+        let accountant = Accountant::new(storage.clone(), &acct_cfg);
 
         Ok(Self {
             assistants,
@@ -134,7 +136,15 @@ impl Agent {
         agent_id: u64,
         params: Query<UrlVerifyParams>,
     ) -> Result<String, StatusCode> {
-        // 验证对象是谁？
+        // 验证的是通讯录组件吗？
+        if agent_id == self.accountant.agent_id() {
+            return self.accountant.verify_url(&params).map_err(|e| {
+                tracing::error!("校验URL失败。{e}");
+                StatusCode::BAD_REQUEST
+            });
+        }
+
+        // 验证对象是哪个Assistant？
         let Some(crypto_agent) = self.crypto_agents.get(&agent_id) else {
             tracing::error!("无法获得加解密对象。agent_id: {agent_id}");
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -149,13 +159,13 @@ impl Agent {
         }
 
         // Give the server what it expects.
-        match crypto_agent.decrypt(&params.echostr) {
-            Ok(t) => Ok(t.text),
-            Err(e) => {
+        Ok(crypto_agent
+            .decrypt(&params.echostr)
+            .map_err(|e| {
                 tracing::error!("解密消息失败。{e}");
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        }
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+            .text)
     }
 
     /// 处理用户发来的请求
@@ -163,11 +173,11 @@ impl Agent {
     pub async fn handle_user_request(
         &self,
         agent_id: u64,
-        params: Query<AppMessageParams>,
+        params: Query<CallbackParams>,
         body: String,
     ) {
         // 获取请求Body结构体
-        let body: AppMessageRequestBody = match from_str(&body) {
+        let body: CallbackRequestBody = match from_str(&body) {
             Err(e) => {
                 tracing::error!("[{agent_id}] 解析Body出错。终止当前操作。{e}");
                 return;
@@ -416,5 +426,13 @@ impl Agent {
                 &_ => "抱歉，暂不支持当前指令。".to_string(),
             }
         }
+    }
+
+    /// 处理通讯录更新时间
+    pub async fn handle_account_creation(&self, params: Query<CallbackParams>, body: String) {
+        match self.accountant.handle_user_creation_event(params, body) {
+            Err(e) => tracing::error!("处理新增用户事件失败。{e}"),
+            Ok(_) => tracing::info!("新增用户成功。用户ID"),
+        };
     }
 }
