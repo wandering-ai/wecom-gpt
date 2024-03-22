@@ -374,9 +374,9 @@ impl Agent {
                     };
                     let mut msg = String::new();
                     for g in &guests {
-                        msg.push_str(format!("{} {} {}", g.name, g.credit, g.admin).as_str());
+                        msg.push_str(format!("{} {} {}\n", g.name, g.credit, g.admin).as_str());
                     }
-                    msg
+                    msg.trim().to_owned()
                 }
                 [username, "充值", value] => {
                     let Ok(v) = value.parse::<f64>() else {
