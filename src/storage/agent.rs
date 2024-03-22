@@ -193,6 +193,19 @@ impl Agent {
         Ok(())
     }
 
+    // 删除用户
+    pub fn remove_user(&self, guest: &core::Guest) -> Result<u64, Error> {
+        use self::schema::guests::dsl::*;
+        let conn = &mut self
+            .connections
+            .get()
+            .map_err(|e| Error::Connection(e.to_string()))?;
+        let rows_deleted = diesel::delete(guests.filter(name.eq(&guest.name)))
+            .execute(conn)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(rows_deleted as u64)
+    }
+
     // 新建一条会话记录作为当前活跃会话记录。
     // 此操作会将之前活跃会话记录标记为非活跃。
     pub fn create_conversation(&self, guest: &core::Guest, assistant_id: u64) -> Result<(), Error> {
@@ -480,6 +493,24 @@ mod tests {
             .expect("User update should succeed");
         let user = agent.get_user(&guest.name).unwrap();
         assert_eq!(guest, user);
+    }
+
+    #[test]
+    fn test_user_delete() {
+        use super::core;
+        let agent =
+            Agent::new(":memory:", "administrator").expect("Database agent should be initialized");
+        let mut guest = core::Guest {
+            name: "yinguobing".to_string(),
+            credit: 1.2,
+            admin: true,
+        };
+        assert_eq!(agent.remove_user(&guest).unwrap(), 0);
+        guest.name = "administrator".to_string();
+        let n = agent
+            .remove_user(&guest)
+            .expect("This user remove should not fail");
+        assert_eq!(n, 1);
     }
 
     // 测试会话记录

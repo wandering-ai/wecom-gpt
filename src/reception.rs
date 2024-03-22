@@ -365,11 +365,8 @@ impl Agent {
             let args: Vec<&str> = msg.split(' ').collect();
 
             // 指令内容时什么，及如何回复？
-            match &args[..] {
-                ["help"] => "当前支持指令：
-                查用户：查询全部用户
-                用户名 充值 金额：为用户账户充值指定金额
-                用户名 管理员 true/false：设定某用户的管理员角色"
+            match args[..] {
+                ["help"] => "当前支持指令：\n查用户：查询全部用户\n用户名 充值 金额：为用户账户充值指定金额\n用户名 管理员 true/false：设定某用户的管理员角色\n用户名 删除：删除指定用户"
                     .to_string(),
                 ["查用户"] => {
                     let Ok(guests) = self.accountant.get_guests() else {
@@ -381,12 +378,12 @@ impl Agent {
                     }
                     msg
                 }
-                [_, "充值", value] => {
+                [username, "充值", value] => {
                     let Ok(v) = value.parse::<f64>() else {
                         return "用户余额解析出错".to_string();
                     };
                     // 获取待操作的用户
-                    let user = match self.accountant.get_guest(args[0]) {
+                    let user = match self.accountant.get_guest(username) {
                         Ok(u) => u,
                         Err(e) => return format!("无法找到用户{}。{}", args[0], e),
                     };
@@ -400,12 +397,12 @@ impl Agent {
                         Ok(_) => format!("更新成功。当前余额：{}", user_to_update.credit),
                     }
                 }
-                [_, "管理员", value] => {
+                [username, "管理员", value] => {
                     let Ok(v) = value.parse::<bool>() else {
                         return "管理员属性解析出错。".to_string();
                     };
                     // 获取待操作的用户
-                    let user = match self.accountant.get_guest(args[0]) {
+                    let user = match self.accountant.get_guest(username) {
                         Ok(u) => u,
                         Err(e) => return format!("无法找到用户。{e}"),
                     };
@@ -424,6 +421,18 @@ impl Agent {
                         ),
                     }
                 }
+                [username, "删除"] => {
+                    // 获取待操作的用户
+                    let user = match self.accountant.get_guest(username) {
+                        Ok(u) => u,
+                        Err(e) => return format!("无法找到用户。{e}"),
+                    };
+                    // 删除用户
+                    match self.accountant.remove_guest(&user) {
+                        Err(e) => format!("删除用户出错：{e}"),
+                        Ok(n) => format!("删除{n}条用户记录。"),
+                    }
+                }
                 _ => "未知指令".to_string(),
             }
         } else {
@@ -433,9 +442,7 @@ impl Agent {
                 return "内部错误，请稍后再试。".to_string();
             };
             match instruction {
-                "#帮助" => "#查余额：显示当前账户余额。
-                #查消耗：显示当前会话的资源消耗。
-                #新会话：开启全新会话。AI将忘记先前会话的全部内容。"
+                "#帮助" => "#查余额：显示当前账户余额。\n#查消耗：显示当前会话的资源消耗。\n#新会话：开启全新会话。AI将忘记先前会话的全部内容。"
                     .to_string(),
                 "#查余额" => format!("当前余额：{:.3}", guest.credit),
                 "#查消耗" => assistant.audit(guest),

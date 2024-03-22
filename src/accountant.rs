@@ -153,4 +153,11 @@ impl Accountant {
             .update_user(guest)
             .map_err(|e| Error::Internal(format!("更新用户失败。{e}")))
     }
+
+    /// 删除账户
+    pub fn remove_guest(&self, guest: &Guest) -> Result<u64, Error> {
+        self.storage
+            .remove_user(guest)
+            .map_err(|e| Error::Internal(format!("删除用户失败。{e}")))
+    }
 }
