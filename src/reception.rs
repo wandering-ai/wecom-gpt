@@ -366,6 +366,11 @@ impl Agent {
 
             // 指令内容时什么，及如何回复？
             match &args[..] {
+                ["help"] => "当前支持指令：
+                查用户：查询全部用户
+                用户名 充值 金额：为用户账户充值指定金额
+                用户名 管理员 true/false：设定某用户的管理员角色"
+                    .to_string(),
                 ["查用户"] => {
                     let Ok(guests) = self.accountant.get_guests() else {
                         return "无法从数据库中获得用户".to_string();
@@ -383,7 +388,7 @@ impl Agent {
                     // 获取待操作的用户
                     let user = match self.accountant.get_guest(args[0]) {
                         Ok(u) => u,
-                        Err(e) => return format!("无法找到用户。{e}"),
+                        Err(e) => return format!("无法找到用户{}。{}", args[0], e),
                     };
                     // 更新用户
                     let user_to_update = Guest {
@@ -391,7 +396,7 @@ impl Agent {
                         ..user
                     };
                     match self.accountant.update_guest(&user_to_update) {
-                        Err(e) => format!("更新用户余额出错：{e}"),
+                        Err(e) => format!("更新用户{}余额出错。{e}", args[0]),
                         Ok(_) => format!("更新成功。当前余额：{}", user_to_update.credit),
                     }
                 }
@@ -428,6 +433,10 @@ impl Agent {
                 return "内部错误，请稍后再试。".to_string();
             };
             match instruction {
+                "#帮助" => "#查余额：显示当前账户余额。
+                #查消耗：显示当前会话的资源消耗。
+                #新会话：开启全新会话。AI将忘记先前会话的全部内容。"
+                    .to_string(),
                 "#查余额" => format!("当前余额：{:.3}", guest.credit),
                 "#查消耗" => assistant.audit(guest),
                 "#新会话" => match assistant.new_conversation(guest) {
