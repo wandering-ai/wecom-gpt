@@ -264,7 +264,7 @@ impl Agent {
 
         // 用户是否可以使用本服务？
         if overdue < 0.0 {
-            self.log_n_reply(&format!("账户余额不足。当前余额{overdue}"), &msg_content)
+            self.log_n_reply(&format!("账户余额不足。当前余额{overdue:.3}"), &msg_content)
                 .await;
             return;
         }
@@ -417,7 +417,7 @@ impl Agent {
                 return "内部错误，请稍后再试。".to_string();
             };
             match instruction {
-                "#查余额" => format!("当前余额：{}", guest.credit),
+                "#查余额" => format!("当前余额：{:.3}", guest.credit),
                 "#查消耗" => assistant.audit(guest),
                 "#新会话" => match assistant.new_conversation(guest) {
                     Err(e) => format!("为{}新建会话记录失败。{}", guest.name, e),
