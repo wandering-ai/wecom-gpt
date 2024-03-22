@@ -263,7 +263,7 @@ impl Agent {
         }
 
         // 用户是否可以使用本服务？
-        if overdue <= 0.0 {
+        if overdue < 0.0 {
             self.log_n_reply(&format!("账户余额不足。当前余额{overdue}"), &msg_content)
                 .await;
             return;
