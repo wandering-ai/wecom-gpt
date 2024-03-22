@@ -135,11 +135,16 @@ impl Accountant {
         }
     }
 
-    /// 获取账户。若不存在则触发NotFound错误。
+    /// 按照用户名获取账户。若不存在则触发NotFound错误。
     pub fn get_guest(&self, guest_name: &str) -> Result<Guest, Error> {
         self.storage
             .get_user(guest_name)
             .map_err(|_| Error::NotFound)
+    }
+
+    /// 获取全部账户
+    pub fn get_guests(&self) -> Result<Vec<Guest>, Error> {
+        self.storage.get_users().map_err(|_| Error::NotFound)
     }
 
     /// 更新账户

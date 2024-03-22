@@ -364,11 +364,6 @@ impl Agent {
             let msg = instruction.trim_matches('$');
             let args: Vec<&str> = msg.split(' ').collect();
 
-            // 参数数量正确？
-            if args.len() != 3 {
-                return format!("指令参数数量错误。需要3，收到{}", args.len());
-            }
-
             // 获取待操作的用户
             let user = match self.accountant.get_guest(args[0]) {
                 Ok(u) => u,
@@ -377,6 +372,16 @@ impl Agent {
 
             // 指令内容时什么，及如何回复？
             match &args[..] {
+                ["查用户"] => {
+                    let Ok(guests) = self.accountant.get_guests() else {
+                        return "无法从数据库中获得用户".to_string();
+                    };
+                    let mut msg = String::new();
+                    for g in &guests {
+                        msg.push_str(format!("{} {} {}", g.name, g.credit, g.admin).as_str());
+                    }
+                    msg
+                }
                 [_, "充值", value] => {
                     let Ok(v) = value.parse::<f64>() else {
                         return "用户余额解析出错".to_string();

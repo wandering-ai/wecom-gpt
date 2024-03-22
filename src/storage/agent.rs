@@ -135,6 +135,27 @@ impl Agent {
         Ok(())
     }
 
+    /// 获取全部用户
+    pub fn get_users(&self) -> Result<Vec<core::Guest>, Error> {
+        use self::schema::guests::dsl::*;
+        let conn = &mut self
+            .connections
+            .get()
+            .map_err(|e| Error::Connection(e.to_string()))?;
+        let db_users: Vec<model::Guest> = guests
+            .load(conn)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let users = db_users
+            .iter()
+            .map(|u| core::Guest {
+                name: u.name.clone(),
+                credit: u.credit,
+                admin: u.admin,
+            })
+            .collect();
+        Ok(users)
+    }
+
     /// 按照用户名获取用户
     pub fn get_user(&self, unique_guest_name: &str) -> Result<core::Guest, Error> {
         use self::schema::guests::dsl::*;
@@ -382,6 +403,36 @@ mod tests {
             .expect("Existing user should be got without any error");
 
         assert_eq!(guest, registered_user);
+    }
+
+    #[test]
+    fn test_user_get_all() {
+        use super::core;
+        let agent =
+            Agent::new(":memory:", "yinguobing").expect("Database agent should be initialized");
+
+        // Register new users
+        let guest = core::Guest {
+            name: "robin".to_string(),
+            credit: 1.2,
+            admin: true,
+        };
+        agent
+            .create_user(&guest)
+            .expect("User registration should succeed");
+
+        let admin = core::Guest {
+            name: "yinguobing".to_string(),
+            credit: 0.0,
+            admin: true,
+        };
+
+        // Fetch the users
+        let registered_users = agent
+            .get_users()
+            .expect("All existing user should be got without any error");
+
+        assert_eq!(vec![admin, guest], registered_users);
     }
 
     #[test]
