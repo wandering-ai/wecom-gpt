@@ -46,6 +46,16 @@ pub struct CallbackRequestBody {
 }
 
 /// 应用消息接收后具体内容结构体
+/// | 参数          | 说明
+/// | ToUserName    | 企业微信CorpID
+/// | FromUserName  | 成员UserID
+/// | CreateTime    | 消息创建时间（整型）
+/// | MsgType       | 消息类型，此时固定为：text
+/// | Content       | 文本消息内容
+/// | MsgI          | 消息id，64位整型
+/// | AgentID       | 企业应用的id，整型。可在应用的设置页面查看
+///
+/// 示例
 // <xml>
 //   <ToUserName><![CDATA[ww637951f75e40d82b]]></ToUserName>
 //   <FromUserName><![CDATA[YinGuoBing]]></FromUserName>
@@ -151,4 +161,6 @@ pub struct AppMessageContent {
 pub struct ContactEventContent {
     #[serde(rename = "UserID")]
     pub user_id: String,
+    #[serde(rename = "ChangeType")]
+    pub event: String,
 }

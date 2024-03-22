@@ -220,7 +220,7 @@ impl Agent {
         tracing::debug!("User message parsed");
 
         // 首先验证消息发送者。若用户不存在，则尝试创建该用户。若用户逾期，则返回具体金额。
-        let guest_name: &str = body.to_user_name.as_str();
+        let guest_name: &str = msg_content.from_user_name.as_str();
         let overdue: f64 = match self.accountant.verify_guest(guest_name) {
             Err(AccountError::Internal(e)) => {
                 tracing::error!("[{agent_id}] 验证用户失败。终止当前操作。{e}");
