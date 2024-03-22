@@ -364,12 +364,6 @@ impl Agent {
             let msg = instruction.trim_matches('$');
             let args: Vec<&str> = msg.split(' ').collect();
 
-            // 获取待操作的用户
-            let user = match self.accountant.get_guest(args[0]) {
-                Ok(u) => u,
-                Err(e) => return format!("无法找到用户。{e}"),
-            };
-
             // 指令内容时什么，及如何回复？
             match &args[..] {
                 ["查用户"] => {
@@ -386,6 +380,12 @@ impl Agent {
                     let Ok(v) = value.parse::<f64>() else {
                         return "用户余额解析出错".to_string();
                     };
+                    // 获取待操作的用户
+                    let user = match self.accountant.get_guest(args[0]) {
+                        Ok(u) => u,
+                        Err(e) => return format!("无法找到用户。{e}"),
+                    };
+                    // 更新用户
                     let user_to_update = Guest {
                         credit: user.credit + v,
                         ..user
@@ -399,6 +399,12 @@ impl Agent {
                     let Ok(v) = value.parse::<bool>() else {
                         return "管理员属性解析出错。".to_string();
                     };
+                    // 获取待操作的用户
+                    let user = match self.accountant.get_guest(args[0]) {
+                        Ok(u) => u,
+                        Err(e) => return format!("无法找到用户。{e}"),
+                    };
+                    // 更新用户
                     let user_to_update = Guest { admin: v, ..user };
                     match self.accountant.update_guest(&user_to_update) {
                         Err(e) => format!("更新管理员属性出错：{e}"),
