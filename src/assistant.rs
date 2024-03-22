@@ -119,15 +119,13 @@ impl core::Chat for Assistant {
             }
         }
         if conversation.len() >= 3 {
-            let mut current_tokens = conversation.last().unwrap().prompt_tokens
-                + conversation.last().unwrap().completion_tokens;
-            while current_tokens > (self.provider.max_tokens() as f64 * 0.9) as i32
-                && conversation.len() > 2
-            {
-                current_tokens -= conversation.get(1).unwrap().prompt_tokens
+            let mut tokens_to_drop = conversation.last().unwrap().completion_tokens;
+            while tokens_to_drop > 0 && conversation.len() > 2 {
+                let tokens_dropped = conversation.get(1).unwrap().prompt_tokens
                     + conversation.get(1).unwrap().completion_tokens;
+                tokens_to_drop -= tokens_dropped;
                 conversation.remove(1);
-                tracing::warn!("Previous message dropped to match the content window limit");
+                tracing::warn!("Dropped {tokens_dropped} tokens due to token limit");
             }
         }
         tracing::debug!("Content window limit check passed");
