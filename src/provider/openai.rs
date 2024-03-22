@@ -242,22 +242,6 @@ impl Agent {
     ) -> Result<Response, Error> {
         let mut conv = conversation.clone();
 
-        // System Message完整？
-        if conv
-            .messages
-            .first()
-            .is_some_and(|m| m.role != Role::System.to_string())
-        {
-            conv.messages.insert(
-                0,
-                Message {
-                    content: prompt.unwrap_or(DEFAULT_SYSTEM_MSG).to_string(),
-                    role: Role::System.to_string(),
-                },
-            );
-            tracing::warn!("System message not found, default used.")
-        }
-
         // 交由AI处理
         tracing::debug!("Ask AI for response..");
         let header = {

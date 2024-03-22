@@ -276,7 +276,11 @@ impl Agent {
         };
         let reply_msg = match assistant.chat(&guest, &msg_content.content).await {
             Err(e) => {
-                tracing::error!("[{agent_id}] 获取AI回复失败。终止当前操作。{e}");
+                self.log_n_reply(
+                    format!("获取AI回复失败。请稍后尝试，或者联系管理员处理。{e}").as_str(),
+                    &msg_content,
+                )
+                .await;
                 return;
             }
             Ok(m) => m,

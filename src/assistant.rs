@@ -93,22 +93,6 @@ impl core::Chat for Assistant {
                 .map_err(|e| Error::StorageError(format!("创建会话记录失败。{e}")))?;
             tracing::info!("已为用户{}创建会话记录。", guest.name);
         };
-        tracing::debug!("Conversation got");
-
-        // 记录用户消息，并与当前会话记录关联
-        let new_msg = Message {
-            content: message.to_owned(),
-            role: Role::User.to_string(),
-        };
-        if let Err(e) = self
-            .storage
-            .append_message(guest, self.id, &new_msg, 0.0, 0, 0)
-        {
-            return Err(Box::new(Error::StorageError(format!("追加消息失败。{e}"))));
-        }
-        tracing::debug!("User message appended");
-
-        // 获取AI可以处理的会话记录。
         let mut conversation = match self.storage.get_conversation(guest, self.id) {
             Err(e) => {
                 return Err(Box::new(Error::StorageError(format!(
@@ -120,6 +104,20 @@ impl core::Chat for Assistant {
         tracing::debug!("Conversation to process got");
 
         // 会话超长？移除第一条非系统消息直到满足要求。注意长度不要越界。
+        if let Some(msg) = conversation.last() {
+            tracing::debug!(
+                "Last message prompt tokens: {}, completion tokens {}",
+                msg.prompt_tokens,
+                msg.completion_tokens
+            );
+            if msg.prompt_tokens + msg.completion_tokens >= self.provider.max_tokens() as i32 {
+                tracing::warn!(
+                    "Max token size reached. Expect <={}, got {}",
+                    self.provider.max_tokens(),
+                    msg.prompt_tokens + msg.completion_tokens
+                )
+            }
+        }
         if conversation.len() >= 3 {
             let mut current_tokens = conversation.last().unwrap().prompt_tokens
                 + conversation.last().unwrap().completion_tokens;
@@ -134,10 +132,28 @@ impl core::Chat for Assistant {
         }
         tracing::debug!("Content window limit check passed");
 
-        // 交由AI处理
-        let oai_conv = Conversation {
+        // 转换格式
+        let mut oai_conv = Conversation {
             messages: conversation.iter().map(Message::from).collect(),
         };
+
+        // System Message存在？
+        if oai_conv
+            .messages
+            .first()
+            .is_some_and(|m| m.role != Role::System.to_string())
+        {
+            oai_conv.messages.insert(
+                0,
+                Message {
+                    content: self.prompt.clone(),
+                    role: Role::System.to_string(),
+                },
+            );
+            tracing::warn!("System message not found, default used.")
+        }
+
+        // 交由AI处理
         let ai_response = match self.provider.process(&oai_conv, Some(&self.prompt)).await {
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
             Err(e) => {
@@ -148,6 +164,19 @@ impl core::Chat for Assistant {
             Ok(r) => r,
         };
         tracing::debug!("AI replied");
+
+        // 记录用户消息，并与当前会话记录关联
+        let new_msg = Message {
+            content: message.to_owned(),
+            role: Role::User.to_string(),
+        };
+        if let Err(e) = self
+            .storage
+            .append_message(guest, self.id, &new_msg, 0.0, 0, 0)
+        {
+            return Err(Box::new(Error::StorageError(format!("追加消息失败。{e}"))));
+        }
+        tracing::debug!("User message appended");
 
         // 更新AI回复到会话记录
         tracing::debug!("Constructing reply message");
