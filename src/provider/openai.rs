@@ -240,8 +240,6 @@ impl Agent {
         conversation: &Conversation,
         prompt: Option<&str>,
     ) -> Result<Response, Error> {
-        let mut conv = conversation.clone();
-
         // 交由AI处理
         tracing::debug!("Ask AI for response..");
         let header = {
@@ -255,7 +253,7 @@ impl Agent {
         let response = self
             .client
             .post(&self.config.endpoint)
-            .json(&conv)
+            .json(conversation)
             .headers(header)
             .send()
             .await

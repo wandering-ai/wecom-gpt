@@ -153,6 +153,12 @@ impl core::Chat for Assistant {
             tracing::warn!("System message not found, default used.")
         }
 
+        // 追加用户消息
+        oai_conv.messages.push(Message {
+            role: Role::User.to_string(),
+            content: message.to_owned(),
+        });
+
         // 交由AI处理
         let ai_response = match self.provider.process(&oai_conv, Some(&self.prompt)).await {
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
