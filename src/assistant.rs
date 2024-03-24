@@ -165,7 +165,7 @@ impl core::Chat for Assistant {
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
             Err(e) => {
                 return Err(Box::new(Error::ProviderError(format!(
-                    "获取AI回复时发生错误。请等一分钟再试，或者向管理员寻求帮助。{e}"
+                    "获取AI回复时发生错误。{e}"
                 ))))
             }
             Ok(r) => r,
