@@ -9,6 +9,7 @@ use crate::storage::Agent as StorageAgent;
 use serde::Deserialize;
 use std::fmt;
 use std::sync::Arc;
+use tiktoken_rs::{cl100k_base, CoreBPE};
 
 // Custom Error
 #[derive(Debug, Clone)]
@@ -62,6 +63,7 @@ pub struct Assistant {
     id: u64,
     prompt: String,
     context_tokens_reservation: u64,
+    token_counter: CoreBPE,
 }
 
 impl Assistant {
@@ -73,6 +75,7 @@ impl Assistant {
             id: config.agent_id,
             prompt: config.prompt.clone(),
             context_tokens_reservation: config.context_tokens_reservation,
+            token_counter: cl100k_base().unwrap(),
         }
     }
 }
@@ -106,56 +109,49 @@ impl core::Chat for Assistant {
         };
         tracing::debug!("Got conversation with {} messages", db_conv.len());
 
-        // System Message存在？
+        // 即将发送给AI的会话
         let mut oai_conv: Vec<Message> = Vec::new();
-        if db_conv
+
+        // 追加用户消息
+        let user_msg = Message {
+            role: Role::User.to_string(),
+            content: message.to_owned(),
+        };
+        oai_conv.push(user_msg.clone());
+
+        // 填充历史会话。注意会话超长问题。
+        let mut prompt_tokens: usize = 0;
+        for t in db_conv.iter().enumerate().rev() {
+            prompt_tokens += self
+                .token_counter
+                .encode_with_special_tokens(&t.1.content)
+                .len();
+            if prompt_tokens as u64 >= self.provider.max_tokens() - self.context_tokens_reservation
+            {
+                tracing::warn!("Conversation cut at index {}", t.0);
+                break;
+            }
+            oai_conv.push(Message {
+                role: Role::try_from(t.1.message_type)?.to_string(),
+                content: t.1.content.clone(),
+            })
+        }
+        tracing::debug!("Total messages to AI: {}", oai_conv.len());
+
+        // 填充系统消息
+        if oai_conv
             .first()
-            .is_some_and(|m| m.message_type != Role::System.to_id())
+            .is_some_and(|m| m.role != Role::System.to_string())
         {
-            oai_conv.insert(
-                0,
-                Message {
-                    content: self.prompt.clone(),
-                    role: Role::System.to_string(),
-                },
-            );
+            oai_conv.push(Message {
+                content: self.prompt.clone(),
+                role: Role::System.to_string(),
+            });
             tracing::warn!("System message not found, default used.")
         }
 
-        // 会话超长？
-        if db_conv.last().is_some_and(|msg| {
-            msg.prompt_tokens + msg.completion_tokens >= self.provider.max_tokens() as i32
-        }) {
-            tracing::warn!(
-                "Max token size reached. Expect <={}, got {}. Going to remove old messages.",
-                self.provider.max_tokens(),
-                db_conv.last().unwrap().prompt_tokens + db_conv.last().unwrap().completion_tokens
-            );
-            // Find the cut off point
-            let split_index: usize = match db_conv.iter().enumerate().find(|t| {
-                self.provider.max_tokens() as i32 - t.1.completion_tokens - t.1.prompt_tokens
-                    > self.context_tokens_reservation as i32
-            }) {
-                Some(p) => p.0,
-                None => 0,
-            };
-            for m in &db_conv[split_index..] {
-                oai_conv.push(Message {
-                    role: Role::try_from(m.message_type)?.to_string(),
-                    content: m.content.clone(),
-                })
-            }
-        }
-        tracing::debug!(
-            "Token limit check passed. Total messages {}",
-            oai_conv.len()
-        );
-
-        // 追加用户消息
-        oai_conv.push(Message {
-            role: Role::User.to_string(),
-            content: message.to_owned(),
-        });
+        // 恢复正常时序
+        oai_conv.reverse();
 
         // 交由AI处理
         let ai_response = match self
@@ -174,13 +170,9 @@ impl core::Chat for Assistant {
         tracing::debug!("AI replied");
 
         // 记录用户消息，并与当前会话记录关联
-        let new_msg = Message {
-            content: message.to_owned(),
-            role: Role::User.to_string(),
-        };
         if let Err(e) = self
             .storage
-            .append_message(guest, self.id, &new_msg, 0.0, 0, 0)
+            .append_message(guest, self.id, &user_msg, 0.0, 0, 0)
         {
             return Err(Box::new(Error::StorageError(format!("追加消息失败。{e}"))));
         }
