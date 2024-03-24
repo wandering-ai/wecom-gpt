@@ -37,6 +37,7 @@ pub struct Config {
     pub secret: String,
     pub prompt: String,
     pub provider_id: u64,
+    pub context_tokens_reservation: u64,
 }
 
 /// 助手的回复
@@ -60,6 +61,7 @@ pub struct Assistant {
     storage: Arc<StorageAgent>,
     id: u64,
     prompt: String,
+    context_tokens_reservation: u64,
 }
 
 impl Assistant {
@@ -70,6 +72,7 @@ impl Assistant {
             storage,
             id: config.agent_id,
             prompt: config.prompt.clone(),
+            context_tokens_reservation: config.context_tokens_reservation,
         }
     }
 }
@@ -119,13 +122,13 @@ impl core::Chat for Assistant {
             }
         }
         if conversation.len() >= 3 {
-            let mut tokens_to_drop = conversation.last().unwrap().completion_tokens;
-            while tokens_to_drop > 0 && conversation.len() > 2 {
-                let tokens_dropped = conversation.get(1).unwrap().prompt_tokens
+            let mut tokens_dropped: i32 = 0;
+            while tokens_dropped < self.context_tokens_reservation as i32 && conversation.len() > 2
+            {
+                tokens_dropped += conversation.get(1).unwrap().prompt_tokens
                     + conversation.get(1).unwrap().completion_tokens;
-                tokens_to_drop -= tokens_dropped;
                 conversation.remove(1);
-                tracing::warn!("Dropped {tokens_dropped} tokens due to token limit");
+                tracing::warn!("Dropped {tokens_dropped} tokens due to conversation limit");
             }
         }
         tracing::debug!("Content window limit check passed");
@@ -231,7 +234,9 @@ impl core::Chat for Assistant {
             .expect("Conversation should be ready");
 
         format!(
-            "当前会话累计消耗prompt token {}个，completion token {}个，费用{}。",
+            "当前会话长度为 {}。累计消耗prompt token {}个，completion token {}个，费用{:.3}。",
+            conversation.last().unwrap().prompt_tokens
+                + conversation.last().unwrap().completion_tokens,
             conversation.iter().fold(0, |acc, x| acc + x.prompt_tokens),
             conversation
                 .iter()

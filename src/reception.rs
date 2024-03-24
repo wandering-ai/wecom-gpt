@@ -459,7 +459,7 @@ impl Agent {
         }
     }
 
-    /// 处理通讯录更新时间
+    /// 处理通讯录更新事件
     pub async fn handle_account_creation(&self, params: Query<CallbackParams>, body: String) {
         match self.accountant.handle_user_creation_event(params, body) {
             Err(e) => tracing::error!("处理新增用户事件失败。{e}"),
