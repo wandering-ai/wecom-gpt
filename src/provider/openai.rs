@@ -17,8 +17,6 @@ impl fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
-const DEFAULT_SYSTEM_MSG: &str = "You are a helpful assistant.";
-
 // Chat请求返回结果
 // 示例
 // {
@@ -235,11 +233,7 @@ impl Agent {
     }
 
     // 根据会话内容，返回最新消息。
-    pub async fn process(
-        &self,
-        conversation: &Conversation,
-        prompt: Option<&str>,
-    ) -> Result<Response, Error> {
+    pub async fn process(&self, conversation: &Conversation) -> Result<Response, Error> {
         // 交由AI处理
         tracing::debug!("Ask AI for response..");
         let header = {

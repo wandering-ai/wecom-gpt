@@ -161,7 +161,7 @@ impl core::Chat for Assistant {
         });
 
         // 交由AI处理
-        let ai_response = match self.provider.process(&oai_conv, Some(&self.prompt)).await {
+        let ai_response = match self.provider.process(&oai_conv).await {
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
             Err(e) => {
                 return Err(Box::new(Error::ProviderError(format!(
