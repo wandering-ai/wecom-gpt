@@ -252,9 +252,12 @@ impl Agent {
             .send()
             .await
             .map_err(|e| Error(format!("发送AI请求失败。{e}")))?
+            .error_for_status()
+            .map_err(|e| Error(format!("AI返回错误消息。{e}")))?
             .json::<Response>()
             .await
-            .map_err(|e| Error(format!("接收AI返回失败。{e}")))?;
+            .map_err(|e| Error(format!("解析AI返回失败。{e}")))?;
+
         Ok(response)
     }
 
