@@ -96,7 +96,7 @@ impl core::Chat for Assistant {
                 .map_err(|e| Error::StorageError(format!("创建会话记录失败。{e}")))?;
             tracing::info!("已为用户{}创建会话记录。", guest.name);
         };
-        let mut conversation = match self.storage.get_conversation(guest, self.id) {
+        let db_conv = match self.storage.get_conversation(guest, self.id) {
             Err(e) => {
                 return Err(Box::new(Error::StorageError(format!(
                     "获取会话记录失败。{e}"
@@ -104,47 +104,15 @@ impl core::Chat for Assistant {
             }
             Ok(c) => c,
         };
-        tracing::debug!("Conversation to process got");
-
-        // 会话超长？移除第一条非系统消息直到满足要求。注意长度不要越界。
-        if let Some(msg) = conversation.last() {
-            tracing::debug!(
-                "Last message prompt tokens: {}, completion tokens {}",
-                msg.prompt_tokens,
-                msg.completion_tokens
-            );
-            if msg.prompt_tokens + msg.completion_tokens >= self.provider.max_tokens() as i32 {
-                tracing::warn!(
-                    "Max token size reached. Expect <={}, got {}",
-                    self.provider.max_tokens(),
-                    msg.prompt_tokens + msg.completion_tokens
-                )
-            }
-        }
-        if conversation.len() >= 3 {
-            let mut tokens_dropped: i32 = 0;
-            while tokens_dropped < self.context_tokens_reservation as i32 && conversation.len() > 2
-            {
-                tokens_dropped += conversation.get(1).unwrap().prompt_tokens
-                    + conversation.get(1).unwrap().completion_tokens;
-                conversation.remove(1);
-                tracing::warn!("Dropped {tokens_dropped} tokens due to conversation limit");
-            }
-        }
-        tracing::debug!("Content window limit check passed");
-
-        // 转换格式
-        let mut oai_conv = Conversation {
-            messages: conversation.iter().map(Message::from).collect(),
-        };
+        tracing::debug!("Got conversation with {} messages", db_conv.len());
 
         // System Message存在？
-        if oai_conv
-            .messages
+        let mut oai_conv: Vec<Message> = Vec::new();
+        if db_conv
             .first()
-            .is_some_and(|m| m.role != Role::System.to_string())
+            .is_some_and(|m| m.message_type != Role::System.to_id())
         {
-            oai_conv.messages.insert(
+            oai_conv.insert(
                 0,
                 Message {
                     content: self.prompt.clone(),
@@ -154,14 +122,47 @@ impl core::Chat for Assistant {
             tracing::warn!("System message not found, default used.")
         }
 
+        // 会话超长？
+        if db_conv.last().is_some_and(|msg| {
+            msg.prompt_tokens + msg.completion_tokens >= self.provider.max_tokens() as i32
+        }) {
+            tracing::warn!(
+                "Max token size reached. Expect <={}, got {}. Going to remove old messages.",
+                self.provider.max_tokens(),
+                db_conv.last().unwrap().prompt_tokens + db_conv.last().unwrap().completion_tokens
+            );
+            // Find the cut off point
+            let split_index: usize = match db_conv.iter().enumerate().find(|t| {
+                self.provider.max_tokens() as i32 - t.1.completion_tokens - t.1.prompt_tokens
+                    > self.context_tokens_reservation as i32
+            }) {
+                Some(p) => p.0,
+                None => 0,
+            };
+            for m in &db_conv[split_index..] {
+                oai_conv.push(Message {
+                    role: Role::try_from(m.message_type)?.to_string(),
+                    content: m.content.clone(),
+                })
+            }
+        }
+        tracing::debug!(
+            "Token limit check passed. Total messages {}",
+            oai_conv.len()
+        );
+
         // 追加用户消息
-        oai_conv.messages.push(Message {
+        oai_conv.push(Message {
             role: Role::User.to_string(),
             content: message.to_owned(),
         });
 
         // 交由AI处理
-        let ai_response = match self.provider.process(&oai_conv).await {
+        let ai_response = match self
+            .provider
+            .process(&Conversation { messages: oai_conv })
+            .await
+        {
             // 告知用户发生内部错误，避免用户徒劳重试或者等待
             Err(e) => {
                 return Err(Box::new(Error::ProviderError(format!(
